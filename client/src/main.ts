@@ -3,6 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { initDiscord, displayName } from './discord.ts';
 import { buildLattice, addSpawnMarker, SPAWN_POINT } from './world.ts';
 import { DebugFly } from './debug-fly.ts';
+import { createRagdoll } from './ragdoll.ts';
 
 const DARK_BLUE = 0x0a1438;
 const FIXED_DT = 1 / 60;
@@ -49,6 +50,8 @@ const { count: cubeCount } = buildLattice(scene, world);
 addSpawnMarker(scene);
 console.log(`[world] ${cubeCount} cubes built`);
 
+const ragdoll = createRagdoll(scene, world, SPAWN_POINT);
+
 const debugFly = new DebugFly(camera, renderer.domElement);
 
 let last = performance.now() / 1000;
@@ -70,6 +73,7 @@ function tick() {
   if (steps === MAX_SUBSTEPS) accumulator = 0;
 
   debugFly.update(frameTime);
+  ragdoll.sync();
 
   renderer.render(scene, camera);
   requestAnimationFrame(tick);
