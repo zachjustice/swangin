@@ -16,6 +16,9 @@ const WORLD_HALF = 30;
 const SLACK_MIN = 0.85;
 const SLACK_MAX = 1.6;
 const SLACK_STEP = 0.05;
+const MOTOR_STEP = 0.1;
+const MOTOR_MIN = 0;
+const MOTOR_MAX = 3.0;
 
 const banner = document.getElementById('banner') as HTMLDivElement;
 const prompt = document.getElementById('prompt') as HTMLDivElement;
@@ -67,8 +70,11 @@ const grapple = new Grapple(scene, world, ragdoll.grappleHand, ragdoll.handLocal
 let userLabel = '…';
 function refreshBanner() {
   const slack = grapple.slackFactor.toFixed(2);
+  const motors = ragdoll.motors.enabled
+    ? ragdoll.motors.globalMultiplier.toFixed(2)
+    : 'off';
   banner.textContent =
-    `${userLabel} — ${cubeCount} cubes · LMB grapple · [ / ] slack=${slack}`;
+    `${userLabel} — ${cubeCount} cubes · LMB grapple · K/L slack=${slack} · ,/. motors=${motors} · M off`;
 }
 refreshBanner();
 
@@ -77,14 +83,16 @@ let accumulator = 0;
 
 function checkRespawn() {
   const t = ragdoll.torso.translation();
-  if (
+  const oob =
     t.y < RESPAWN_Y ||
     Math.abs(t.x) > WORLD_HALF ||
-    Math.abs(t.z) > WORLD_HALF
-  ) {
-    grapple.release();
-    ragdoll.respawn(SPAWN_POINT);
-  }
+    Math.abs(t.z) > WORLD_HALF;
+  if (!oob) return;
+  console.warn(
+    `[respawn] torso at (${t.x.toFixed(1)}, ${t.y.toFixed(1)}, ${t.z.toFixed(1)})`,
+  );
+  grapple.release();
+  ragdoll.respawn(SPAWN_POINT);
 }
 
 function tick() {
@@ -96,6 +104,8 @@ function tick() {
 
   let steps = 0;
   while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
+    ragdoll.motors.grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
+    ragdoll.motors.update(FIXED_DT);
     world.step();
     accumulator -= FIXED_DT;
     steps++;
@@ -138,11 +148,26 @@ window.addEventListener('mouseup', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'BracketLeft') {
+  if (e.code === 'KeyK') {
     grapple.slackFactor = Math.max(SLACK_MIN, grapple.slackFactor - SLACK_STEP);
     refreshBanner();
-  } else if (e.code === 'BracketRight') {
+  } else if (e.code === 'KeyL') {
     grapple.slackFactor = Math.min(SLACK_MAX, grapple.slackFactor + SLACK_STEP);
+    refreshBanner();
+  } else if (e.code === 'Comma') {
+    ragdoll.motors.globalMultiplier = Math.max(
+      MOTOR_MIN,
+      ragdoll.motors.globalMultiplier - MOTOR_STEP,
+    );
+    refreshBanner();
+  } else if (e.code === 'Period') {
+    ragdoll.motors.globalMultiplier = Math.min(
+      MOTOR_MAX,
+      ragdoll.motors.globalMultiplier + MOTOR_STEP,
+    );
+    refreshBanner();
+  } else if (e.code === 'KeyM') {
+    ragdoll.motors.enabled = !ragdoll.motors.enabled;
     refreshBanner();
   } else if (e.code === 'KeyR') {
     grapple.release();
