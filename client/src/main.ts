@@ -5,10 +5,17 @@ import { buildLattice, addSpawnMarker, SPAWN_POINT } from './world.ts';
 import { createRagdoll } from './ragdoll.ts';
 import { ThirdPersonCamera } from './third-person-camera.ts';
 import { CubeReticle } from './reticle.ts';
+import { Grapple } from './grapple.ts';
 
 const DARK_BLUE = 0x0a1438;
 const FIXED_DT = 1 / 60;
 const MAX_SUBSTEPS = 5;
+
+const RESPAWN_Y = -15;
+const WORLD_HALF = 30;
+const SLACK_MIN = 0.85;
+const SLACK_MAX = 1.6;
+const SLACK_STEP = 0.05;
 
 const banner = document.getElementById('banner') as HTMLDivElement;
 const prompt = document.getElementById('prompt') as HTMLDivElement;
@@ -55,9 +62,30 @@ const ragdoll = createRagdoll(scene, world, SPAWN_POINT);
 
 const tpCamera = new ThirdPersonCamera(camera, renderer.domElement, ragdoll.torso);
 const reticle = new CubeReticle(scene, world);
+const grapple = new Grapple(scene, world, ragdoll.grappleHand, ragdoll.handLocalOffset);
+
+let userLabel = '…';
+function refreshBanner() {
+  const slack = grapple.slackFactor.toFixed(2);
+  banner.textContent =
+    `${userLabel} — ${cubeCount} cubes · LMB grapple · [ / ] slack=${slack}`;
+}
+refreshBanner();
 
 let last = performance.now() / 1000;
 let accumulator = 0;
+
+function checkRespawn() {
+  const t = ragdoll.torso.translation();
+  if (
+    t.y < RESPAWN_Y ||
+    Math.abs(t.x) > WORLD_HALF ||
+    Math.abs(t.z) > WORLD_HALF
+  ) {
+    grapple.release();
+    ragdoll.respawn(SPAWN_POINT);
+  }
+}
 
 function tick() {
   const now = performance.now() / 1000;
@@ -74,7 +102,9 @@ function tick() {
   }
   if (steps === MAX_SUBSTEPS) accumulator = 0;
 
+  checkRespawn();
   ragdoll.sync();
+  grapple.update();
   tpCamera.update(frameTime);
   reticle.update(camera);
 
@@ -85,17 +115,37 @@ tick();
 
 try {
   const session = await initDiscord();
-  if (session) {
-    banner.textContent = `Hello, ${displayName(session.user)} — ${cubeCount} cubes · click to look around`;
-  } else {
-    banner.textContent = `Standalone — ${cubeCount} cubes · click to look around`;
-  }
+  userLabel = session ? `Hello, ${displayName(session.user)}` : 'Standalone';
 } catch (e) {
-  banner.textContent = `Auth failed: ${String(e)}`;
+  userLabel = `Auth failed: ${String(e)}`;
   console.error(e);
 }
+refreshBanner();
 
 prompt.hidden = true;
+
 renderer.domElement.addEventListener('click', () => {
   if (!tpCamera.isLocked) tpCamera.lock();
+});
+
+renderer.domElement.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || !tpCamera.isLocked) return;
+  if (reticle.hitPoint) grapple.fire(reticle.hitPoint);
+});
+
+window.addEventListener('mouseup', (e) => {
+  if (e.button === 0) grapple.release();
+});
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'BracketLeft') {
+    grapple.slackFactor = Math.max(SLACK_MIN, grapple.slackFactor - SLACK_STEP);
+    refreshBanner();
+  } else if (e.code === 'BracketRight') {
+    grapple.slackFactor = Math.min(SLACK_MAX, grapple.slackFactor + SLACK_STEP);
+    refreshBanner();
+  } else if (e.code === 'KeyR') {
+    grapple.release();
+    ragdoll.respawn(SPAWN_POINT);
+  }
 });
