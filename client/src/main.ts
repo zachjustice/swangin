@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { initDiscord, displayName } from './discord.ts';
 import { buildLattice, addSpawnMarker, SPAWN_POINT } from './world.ts';
-import { DebugFly } from './debug-fly.ts';
 import { createRagdoll } from './ragdoll.ts';
+import { ThirdPersonCamera } from './third-person-camera.ts';
+import { CubeReticle } from './reticle.ts';
 
 const DARK_BLUE = 0x0a1438;
 const FIXED_DT = 1 / 60;
@@ -52,7 +53,8 @@ console.log(`[world] ${cubeCount} cubes built`);
 
 const ragdoll = createRagdoll(scene, world, SPAWN_POINT);
 
-const debugFly = new DebugFly(camera, renderer.domElement);
+const tpCamera = new ThirdPersonCamera(camera, renderer.domElement, ragdoll.torso);
+const reticle = new CubeReticle(scene, world);
 
 let last = performance.now() / 1000;
 let accumulator = 0;
@@ -72,8 +74,9 @@ function tick() {
   }
   if (steps === MAX_SUBSTEPS) accumulator = 0;
 
-  debugFly.update(frameTime);
   ragdoll.sync();
+  tpCamera.update(frameTime);
+  reticle.update(camera);
 
   renderer.render(scene, camera);
   requestAnimationFrame(tick);
@@ -83,9 +86,9 @@ tick();
 try {
   const session = await initDiscord();
   if (session) {
-    banner.textContent = `Hello, ${displayName(session.user)} — ${cubeCount} cubes · click to fly (WASD/Space/Ctrl/Shift)`;
+    banner.textContent = `Hello, ${displayName(session.user)} — ${cubeCount} cubes · click to look around`;
   } else {
-    banner.textContent = `Standalone — ${cubeCount} cubes · click to fly (WASD/Space/Ctrl/Shift)`;
+    banner.textContent = `Standalone — ${cubeCount} cubes · click to look around`;
   }
 } catch (e) {
   banner.textContent = `Auth failed: ${String(e)}`;
@@ -94,5 +97,5 @@ try {
 
 prompt.hidden = true;
 renderer.domElement.addEventListener('click', () => {
-  if (!debugFly.isLocked) debugFly.lock();
+  if (!tpCamera.isLocked) tpCamera.lock();
 });
