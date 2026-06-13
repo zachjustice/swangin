@@ -8,7 +8,7 @@ import { GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH } from './constants.ts';
 import {
   FA, HR, NECK_GAP,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
-  SN, TH, TT, UA,
+  SN, TH, TT, UA, MATERIAL,
   POSE_PART_ORDER, PosePart, PART_SHAPES, REMOTE_RAGDOLL_GROUPS,
   HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
@@ -43,7 +43,7 @@ export function createRemoteRagdoll(
   name: string,
   spawnHint: THREE.Vector3,
 ): RemoteRagdoll {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 });
+  const mat = new THREE.MeshStandardMaterial({ color, ...MATERIAL });
   const parts: RemotePart[] = [];
 
   function kinematicBody(at: THREE.Vector3): RAPIER.RigidBody {
