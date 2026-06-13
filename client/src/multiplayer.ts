@@ -14,6 +14,7 @@ interface PlayerState {
 }
 
 interface RoomState {
+  startedAt: number;
   players: Map<string, PlayerState>;
 }
 
@@ -72,6 +73,9 @@ export class Multiplayer {
   private mySessionId: string | null = null;
   private readonly peers = new Map<string, Peer>();
   private readonly outPose: number[] = new Array(POSE_FLOATS);
+  // Fallback to local boot time if state hasn't synced yet — keeps the orb
+  // animating from frame 1 instead of staring at a flat sphere.
+  private startedAt = Date.now();
 
   constructor(private readonly opts: MultiplayerOptions) {
     // Relative URL — Discord URL mapping /colyseus → server; Vite dev proxy
@@ -81,6 +85,13 @@ export class Multiplayer {
 
   get peerCount(): number {
     return this.peers.size;
+  }
+
+  // Seconds since the room was created, derived from the server-broadcast
+  // startedAt. Used to drive ownerless animations (the orb swirl) so every
+  // client sees the same phase modulo small NTP drift.
+  get roomTime(): number {
+    return (Date.now() - this.startedAt) / 1000;
   }
 
   async connect(): Promise<void> {
@@ -97,6 +108,10 @@ export class Multiplayer {
     );
 
     const $ = getStateCallbacks(room);
+    if (room.state.startedAt) this.startedAt = room.state.startedAt;
+    $(room.state).listen('startedAt', (v: number) => {
+      if (v) this.startedAt = v;
+    });
     $(room.state).players.onAdd((player: PlayerState, sessionId: string) => {
       if (sessionId === this.mySessionId) return;
       console.log(`[mp] +peer ${player.name} (${sessionId})`);

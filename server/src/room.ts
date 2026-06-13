@@ -20,7 +20,9 @@ export class SwanginRoom extends Room<SwanginState> {
   override maxClients = 16;
 
   override onCreate(): void {
-    this.setState(new SwanginState());
+    const state = new SwanginState();
+    state.startedAt = Date.now();
+    this.setState(state);
 
     this.onMessage<PoseClientMessage>('pose', (client, data) => {
       // No validation beyond array length — clients are authoritative for

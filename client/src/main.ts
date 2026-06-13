@@ -1,6 +1,9 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { initDiscord, displayName } from './discord.ts';
 import { buildLattice, addSpawnMarker, SPAWN_POINT } from './world.ts';
 import { createRagdoll } from './ragdoll.ts';
@@ -9,6 +12,7 @@ import { CubeReticle } from './reticle.ts';
 import { Grapple } from './grapple.ts';
 import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
+import { createOrb } from './orb.ts';
 
 const DARK_BLUE = 0x0a1438;
 const FIXED_DT = 1 / 60;
@@ -55,15 +59,34 @@ labelRenderer.domElement.style.left = '0';
 labelRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(labelRenderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202040, 0.7));
-const dir = new THREE.DirectionalLight(0xffffff, 0.9);
+// Dimmed compared to pre-orb so the orb's point lights are the dominant source
+// in the central pocket and the bloom pass has obvious bright spots to bleed.
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202040, 0.3));
+const dir = new THREE.DirectionalLight(0xffffff, 0.45);
 dir.position.set(20, 40, 10);
 scene.add(dir);
+
+// EffectComposer pipeline: scene render → UnrealBloomPass. Composer owns final
+// blit to screen; CSS2DRenderer stays a separate DOM overlay so labels render
+// crisp without going through bloom.
+const composer = new EffectComposer(renderer);
+composer.setPixelRatio(window.devicePixelRatio);
+composer.setSize(window.innerWidth, window.innerHeight);
+composer.addPass(new RenderPass(scene, camera));
+// strength, radius, threshold — only pixels above ~0.85 luminance bloom, so
+// the orb fragment shader's 1.6× multiplier and rim boost are what bleed.
+const bloomPass = new UnrealBloomPass(
+  new THREE.Vector2(window.innerWidth, window.innerHeight),
+  0.45, 0.4, 0.95,
+);
+composer.addPass(bloomPass);
 
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  composer.setSize(window.innerWidth, window.innerHeight);
+  bloomPass.setSize(window.innerWidth, window.innerHeight);
   labelRenderer.setSize(window.innerWidth, window.innerHeight);
 });
 
@@ -75,6 +98,8 @@ world.timestep = FIXED_DT;
 const { count: cubeCount } = buildLattice(scene, world);
 addSpawnMarker(scene);
 console.log(`[world] ${cubeCount} cubes built`);
+
+const orb = createOrb(scene, new THREE.Vector3(0, 0, 0));
 
 const ragdoll = createRagdoll(scene, world, SPAWN_POINT);
 
@@ -137,8 +162,9 @@ function tick() {
   tpCamera.update(frameTime);
   reticle.update(camera);
   multiplayer?.update();
+  orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);
 
-  renderer.render(scene, camera);
+  composer.render();
   labelRenderer.render(scene, camera);
   requestAnimationFrame(tick);
 }
