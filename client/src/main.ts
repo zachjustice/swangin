@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { initDiscord, displayName } from './discord.ts';
 import { buildLattice, addSpawnMarker, SPAWN_POINT } from './world.ts';
 import { createRagdoll } from './ragdoll.ts';
@@ -7,6 +8,7 @@ import { ThirdPersonCamera } from './third-person-camera.ts';
 import { CubeReticle } from './reticle.ts';
 import { Grapple } from './grapple.ts';
 import { Multiplayer, colorFromUserId } from './multiplayer.ts';
+import { encodePose } from './pose-codec.ts';
 
 const DARK_BLUE = 0x0a1438;
 const FIXED_DT = 1 / 60;
@@ -20,6 +22,7 @@ const SLACK_STEP = 0.05;
 const MOTOR_STEP = 0.1;
 const MOTOR_MIN = 0;
 const MOTOR_MAX = 3.0;
+const POSE_SEND_HZ = 20;
 
 const banner = document.getElementById('banner') as HTMLDivElement;
 const prompt = document.getElementById('prompt') as HTMLDivElement;
@@ -42,6 +45,16 @@ renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
+// CSS2D layer for name labels — positioned absolutely over the WebGL canvas,
+// transparent and pointer-event-disabled so it doesn't intercept clicks.
+const labelRenderer = new CSS2DRenderer();
+labelRenderer.setSize(window.innerWidth, window.innerHeight);
+labelRenderer.domElement.style.position = 'absolute';
+labelRenderer.domElement.style.top = '0';
+labelRenderer.domElement.style.left = '0';
+labelRenderer.domElement.style.pointerEvents = 'none';
+document.body.appendChild(labelRenderer.domElement);
+
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202040, 0.7));
 const dir = new THREE.DirectionalLight(0xffffff, 0.9);
 dir.position.set(20, 40, 10);
@@ -51,6 +64,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  labelRenderer.setSize(window.innerWidth, window.innerHeight);
 });
 
 await RAPIER.init();
@@ -97,6 +111,9 @@ function checkRespawn() {
   ragdoll.respawn(SPAWN_POINT);
 }
 
+// Multiplayer state — assigned after auth resolves below; tick() guards on null.
+let multiplayer: Multiplayer | null = null;
+
 function tick() {
   const now = performance.now() / 1000;
   let frameTime = now - last;
@@ -119,8 +136,10 @@ function tick() {
   grapple.update();
   tpCamera.update(frameTime);
   reticle.update(camera);
+  multiplayer?.update();
 
   renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
   requestAnimationFrame(tick);
 }
 tick();
@@ -147,8 +166,10 @@ const myColor = colorFromUserId(userId);
 ragdoll.material.color.setHex(myColor);
 refreshBanner();
 
-const multiplayer = new Multiplayer({
+multiplayer = new Multiplayer({
   scene,
+  world,
+  spawnHint: SPAWN_POINT,
   channelId,
   userId,
   name: userName,
@@ -160,12 +181,12 @@ const multiplayer = new Multiplayer({
 });
 
 multiplayer.connect().then(() => {
-  console.log(`[mp] joined room (channelId=${channelId})`);
-  // 20 Hz position broadcast — torso world position only (full pose is C10).
+  // Broadcast full ragdoll pose at 20 Hz; remotes interpolate ~100 ms in the past.
   setInterval(() => {
-    const t = ragdoll.torso.translation();
-    multiplayer.sendPosition(t.x, t.y, t.z);
-  }, 50);
+    if (!multiplayer) return;
+    const grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
+    multiplayer.sendPose(encodePose(ragdoll.poseBodies, grapple.isActive, grappleAnchor));
+  }, Math.round(1000 / POSE_SEND_HZ));
 }).catch((err) => {
   console.error('[mp] failed to join room', err);
   userLabel = `${userLabel} · MP failed`;
