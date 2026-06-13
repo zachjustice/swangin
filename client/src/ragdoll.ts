@@ -4,7 +4,7 @@ import { RagdollMotors, ChainNode } from './motors.ts';
 import {
   FA, HR, NECK_GAP, RAGDOLL_GROUPS, DENSITY,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
-  SN, TH, TT, UA,
+  SN, TH, TT, UA, MATERIAL,
   POSE_PART_ORDER, PosePart, PART_SHAPES, HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
 import { buildPartVisual } from './ragdoll-visuals.ts';
@@ -37,7 +37,7 @@ export function createRagdoll(
   spawn: THREE.Vector3,
   color = 0xff7a55,
 ): Ragdoll {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 });
+  const mat = new THREE.MeshStandardMaterial({ color, ...MATERIAL });
   const parts: Part[] = [];
 
   function makePart(name: PosePart, centerWorld: THREE.Vector3): Part {
