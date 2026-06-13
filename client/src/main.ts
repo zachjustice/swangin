@@ -6,6 +6,7 @@ import { createRagdoll } from './ragdoll.ts';
 import { ThirdPersonCamera } from './third-person-camera.ts';
 import { CubeReticle } from './reticle.ts';
 import { Grapple } from './grapple.ts';
+import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 
 const DARK_BLUE = 0x0a1438;
 const FIXED_DT = 1 / 60;
@@ -68,13 +69,14 @@ const reticle = new CubeReticle(scene, world);
 const grapple = new Grapple(scene, world, ragdoll.grappleHand, ragdoll.handLocalOffset);
 
 let userLabel = '…';
+let peerCount = 0;
 function refreshBanner() {
   const slack = grapple.slackFactor.toFixed(2);
   const motors = ragdoll.motors.enabled
     ? ragdoll.motors.globalMultiplier.toFixed(2)
     : 'off';
   banner.textContent =
-    `${userLabel} — ${cubeCount} cubes · LMB grapple · K/L slack=${slack} · ,/. motors=${motors} · M off`;
+    `${userLabel} — ${cubeCount} cubes · ${peerCount} peer(s) · LMB grapple · K/L slack=${slack} · ,/. motors=${motors} · M off`;
 }
 refreshBanner();
 
@@ -123,14 +125,52 @@ function tick() {
 }
 tick();
 
+let userId = `standalone-${Math.random().toString(36).slice(2, 10)}`;
+let userName = 'Standalone';
+let channelId = 'standalone';
 try {
   const session = await initDiscord();
-  userLabel = session ? `Hello, ${displayName(session.user)}` : 'Standalone';
+  if (session) {
+    userId = session.user.id;
+    userName = displayName(session.user);
+    channelId = session.sdk.channelId ?? 'no-channel';
+    userLabel = `Hello, ${userName}`;
+  } else {
+    userLabel = 'Standalone';
+  }
 } catch (e) {
   userLabel = `Auth failed: ${String(e)}`;
   console.error(e);
 }
+
+const myColor = colorFromUserId(userId);
+ragdoll.material.color.setHex(myColor);
 refreshBanner();
+
+const multiplayer = new Multiplayer({
+  scene,
+  channelId,
+  userId,
+  name: userName,
+  color: myColor,
+  onPeerCountChange: (n) => {
+    peerCount = n;
+    refreshBanner();
+  },
+});
+
+multiplayer.connect().then(() => {
+  console.log(`[mp] joined room (channelId=${channelId})`);
+  // 20 Hz position broadcast — torso world position only (full pose is C10).
+  setInterval(() => {
+    const t = ragdoll.torso.translation();
+    multiplayer.sendPosition(t.x, t.y, t.z);
+  }, 50);
+}).catch((err) => {
+  console.error('[mp] failed to join room', err);
+  userLabel = `${userLabel} · MP failed`;
+  refreshBanner();
+});
 
 prompt.hidden = true;
 
