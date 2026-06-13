@@ -30,7 +30,7 @@ export interface LatticeBuild {
 export function buildLattice(scene: THREE.Scene, world: RAPIER.World): LatticeBuild {
   const geometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
   const material = new THREE.MeshStandardMaterial({
-    color: 0x4a5a8a,
+    color: 0xc8c8c8,
     roughness: 0.8,
     metalness: 0.05,
   });

@@ -14,7 +14,7 @@ import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
 import { createOrb } from './orb.ts';
 
-const DARK_BLUE = 0x0a1438;
+const SKY = 0x3a5a8a;
 const FIXED_DT = 1 / 60;
 const MAX_SUBSTEPS = 5;
 
@@ -32,8 +32,8 @@ const banner = document.getElementById('banner') as HTMLDivElement;
 const prompt = document.getElementById('prompt') as HTMLDivElement;
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(DARK_BLUE);
-scene.fog = new THREE.Fog(DARK_BLUE, 30, 120);
+scene.background = new THREE.Color(SKY);
+scene.fog = new THREE.Fog(SKY, 30, 120);
 
 const camera = new THREE.PerspectiveCamera(
   70,
@@ -47,6 +47,8 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
 
 // CSS2D layer for name labels — positioned absolutely over the WebGL canvas,
@@ -59,10 +61,8 @@ labelRenderer.domElement.style.left = '0';
 labelRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(labelRenderer.domElement);
 
-// Dimmed compared to pre-orb so the orb's point lights are the dominant source
-// in the central pocket and the bloom pass has obvious bright spots to bleed.
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x202040, 0.3));
-const dir = new THREE.DirectionalLight(0xffffff, 0.45);
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.9));
+const dir = new THREE.DirectionalLight(0xfff4e0, 1.5);
 dir.position.set(20, 40, 10);
 scene.add(dir);
 
