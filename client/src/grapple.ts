@@ -1,5 +1,9 @@
 import * as THREE from 'three';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH } from './constants.ts';
 
 // Rigid fixed-length grapple: a rope joint between the hand and a one-off fixed
 // body parked at the surface hit point. Rope acts rigid when taut, so a slack
@@ -10,8 +14,8 @@ export class Grapple {
 
   private joint: RAPIER.ImpulseJoint | null = null;
   private anchorBody: RAPIER.RigidBody | null = null;
-  private readonly line: THREE.Line;
-  private readonly lineGeom: THREE.BufferGeometry;
+  private readonly line: Line2;
+  private readonly lineGeom: LineGeometry;
   private readonly tmpHandWorld = new THREE.Vector3();
   private readonly tmpHandQuat = new THREE.Quaternion();
 
@@ -21,15 +25,18 @@ export class Grapple {
     private readonly hand: RAPIER.RigidBody,
     private readonly handLocal: THREE.Vector3,
   ) {
-    this.lineGeom = new THREE.BufferGeometry();
-    this.lineGeom.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3),
-    );
-    this.line = new THREE.Line(
-      this.lineGeom,
-      new THREE.LineBasicMaterial({ color: 0xffe88a }),
-    );
+    this.lineGeom = new LineGeometry();
+    this.lineGeom.setPositions([0, 0, 0, 0, 0, 0]);
+    // worldUnits → linewidth is in world units, so perspective tapers the far
+    // end naturally. HDR color punches through the bloom threshold for a slight
+    // halo via the existing UnrealBloomPass.
+    const mat = new LineMaterial({
+      color: GRAPPLE_COLOR,
+      linewidth: GRAPPLE_LINE_WIDTH,
+      worldUnits: true,
+      transparent: true,
+    });
+    this.line = new Line2(this.lineGeom, mat);
     this.line.visible = false;
     // Endpoints span the whole world; skip culling to avoid pops.
     this.line.frustumCulled = false;
@@ -83,10 +90,10 @@ export class Grapple {
     if (!this.anchorBody) return;
     this.handWorldPos(this.tmpHandWorld);
     const a = this.anchorBody.translation();
-    const pos = this.lineGeom.getAttribute('position') as THREE.BufferAttribute;
-    pos.setXYZ(0, this.tmpHandWorld.x, this.tmpHandWorld.y, this.tmpHandWorld.z);
-    pos.setXYZ(1, a.x, a.y, a.z);
-    pos.needsUpdate = true;
+    this.lineGeom.setPositions([
+      this.tmpHandWorld.x, this.tmpHandWorld.y, this.tmpHandWorld.z,
+      a.x, a.y, a.z,
+    ]);
   }
 
   private handWorldPos(out: THREE.Vector3): void {

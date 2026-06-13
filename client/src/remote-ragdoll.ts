@@ -1,13 +1,18 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
+import { Line2 } from 'three/examples/jsm/lines/Line2.js';
+import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
+import { GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH } from './constants.ts';
 import {
-  AR, FA, HR, LR, NECK_GAP,
+  FA, HR, NECK_GAP,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
   SN, TH, TT, UA,
   POSE_PART_ORDER, PosePart, PART_SHAPES, REMOTE_RAGDOLL_GROUPS,
-  HAND_LOCAL_Y, FOOT_LOCAL_Y, FOOT_LOCAL_Z,
+  HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
+import { buildPartVisual } from './ragdoll-visuals.ts';
 import { POSE_FLOATS } from './pose-codec.ts';
 
 // Remote ragdoll: 10 kinematic-position bodies (no joints, no motors). Pose is
@@ -24,7 +29,7 @@ export interface RemoteRagdoll {
   // Bodies in POSE_PART_ORDER — what applyPose() expects.
   poseBodies: RAPIER.RigidBody[];
   headMesh: THREE.Object3D;
-  grappleLine: THREE.Line;
+  grappleLine: Line2;
   label: CSS2DObject;
   // pose: 70 floats. grap: [active, ax, ay, az].
   applyPose(pose: number[] | Float32Array, grap: number[] | Float32Array): void;
@@ -38,7 +43,7 @@ export function createRemoteRagdoll(
   name: string,
   spawnHint: THREE.Vector3,
 ): RemoteRagdoll {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 });
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0 });
   const parts: RemotePart[] = [];
 
   function kinematicBody(at: THREE.Vector3): RAPIER.RigidBody {
@@ -48,42 +53,19 @@ export function createRemoteRagdoll(
     );
   }
 
-  function buildPart(name: PosePart, center: THREE.Vector3, isHead: boolean): RemotePart {
+  function buildPart(name: PosePart, center: THREE.Vector3): RemotePart {
     const shape = PART_SHAPES[name];
     const body = kinematicBody(center);
-    if (shape.kind === 'capsule') {
-      world.createCollider(
-        RAPIER.ColliderDesc.capsule(shape.halfH, shape.r)
-          .setCollisionGroups(REMOTE_RAGDOLL_GROUPS),
-        body,
-      );
-      const mesh = new THREE.Mesh(
-        new THREE.CapsuleGeometry(shape.r, shape.halfH * 2, 6, 12),
-        mat,
-      );
-      scene.add(mesh);
-      return { body, mesh };
-    } else {
-      world.createCollider(
-        RAPIER.ColliderDesc.ball(shape.r)
-          .setCollisionGroups(REMOTE_RAGDOLL_GROUPS),
-        body,
-      );
-      const group = new THREE.Group();
-      const sphere = new THREE.Mesh(new THREE.SphereGeometry(shape.r, 18, 14), mat);
-      group.add(sphere);
-      if (isHead) {
-        const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0a0f24 });
-        const eyeR = HR * 0.13;
-        for (const side of [-1, 1] as const) {
-          const eye = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 8, 6), eyeMat);
-          eye.position.set(side * HR * 0.4, HR * 0.18, HR * 0.86);
-          group.add(eye);
-        }
-      }
-      scene.add(group);
-      return { body, mesh: group };
-    }
+    const colliderDesc = shape.kind === 'capsule'
+      ? RAPIER.ColliderDesc.capsule(shape.halfH, shape.r)
+      : RAPIER.ColliderDesc.ball(shape.r);
+    world.createCollider(
+      colliderDesc.setCollisionGroups(REMOTE_RAGDOLL_GROUPS),
+      body,
+    );
+    const mesh = buildPartVisual(name, mat);
+    scene.add(mesh);
+    return { body, mesh };
   }
 
   // Approximate per-part offsets from the torso center for the initial layout
@@ -105,36 +87,24 @@ export function createRemoteRagdoll(
   const partsByName = {} as Record<PosePart, RemotePart>;
   for (const name of POSE_PART_ORDER) {
     const center = spawnHint.clone().add(offsets[name]);
-    const part = buildPart(name, center, name === 'head');
+    const part = buildPart(name, center);
     partsByName[name] = part;
     parts.push(part);
   }
 
-  // Ornaments parented to forearms / shins so they ride along.
-  const handR = new THREE.Mesh(new THREE.SphereGeometry(AR * 1.4, 12, 8), mat);
-  handR.position.set(0, HAND_LOCAL_Y, 0);
-  partsByName.armR_forearm.mesh.add(handR);
-  const handL = new THREE.Mesh(new THREE.SphereGeometry(AR * 1.4, 12, 8), mat);
-  handL.position.set(0, HAND_LOCAL_Y, 0);
-  partsByName.armL_forearm.mesh.add(handL);
-  for (const shinName of ['legL_shin', 'legR_shin'] as const) {
-    const foot = new THREE.Mesh(
-      new THREE.BoxGeometry(LR * 1.8, LR * 0.7, LR * 2.6),
-      mat,
-    );
-    foot.position.set(0, FOOT_LOCAL_Y, FOOT_LOCAL_Z);
-    partsByName[shinName].mesh.add(foot);
-  }
-
-  // Grapple line — remote endpoint comes from grap message.
-  const lineGeom = new THREE.BufferGeometry();
-  lineGeom.setAttribute(
-    'position',
-    new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0], 3),
-  );
-  const grappleLine = new THREE.Line(
+  // Grapple line — remote endpoint comes from grap message. Matches local
+  // player's grapple rendering: world-unit thickness for perspective taper,
+  // HDR-boosted color so the existing bloom pass produces a slight glow.
+  const lineGeom = new LineGeometry();
+  lineGeom.setPositions([0, 0, 0, 0, 0, 0]);
+  const grappleLine = new Line2(
     lineGeom,
-    new THREE.LineBasicMaterial({ color: 0xffe88a }),
+    new LineMaterial({
+      color: GRAPPLE_COLOR,
+      linewidth: GRAPPLE_LINE_WIDTH,
+      worldUnits: true,
+      transparent: true,
+    }),
   );
   grappleLine.visible = false;
   grappleLine.frustumCulled = false;
@@ -184,10 +154,10 @@ export function createRemoteRagdoll(
       tmpHandWorld.y += pose[ro + 1];
       tmpHandWorld.z += pose[ro + 2];
 
-      const pos = lineGeom.getAttribute('position') as THREE.BufferAttribute;
-      pos.setXYZ(0, tmpHandWorld.x, tmpHandWorld.y, tmpHandWorld.z);
-      pos.setXYZ(1, grap[1], grap[2], grap[3]);
-      pos.needsUpdate = true;
+      lineGeom.setPositions([
+        tmpHandWorld.x, tmpHandWorld.y, tmpHandWorld.z,
+        grap[1], grap[2], grap[3],
+      ]);
       grappleLine.visible = true;
     } else {
       grappleLine.visible = false;

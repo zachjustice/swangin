@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { RagdollMotors, ChainNode } from './motors.ts';
 import {
-  AR, FA, HR, LR, NECK_GAP, RAGDOLL_GROUPS, DENSITY,
+  FA, HR, NECK_GAP, RAGDOLL_GROUPS, DENSITY,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
-  SN, TH, TR, TT, UA,
-  POSE_PART_ORDER, PosePart, HAND_LOCAL_Y, FOOT_LOCAL_Y, FOOT_LOCAL_Z,
+  SN, TH, TT, UA,
+  POSE_PART_ORDER, PosePart, PART_SHAPES, HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
+import { buildPartVisual } from './ragdoll-visuals.ts';
 
 // 10-body skeleton joined by spherical joints (C5) + manual PD motors (C8).
 // Parts get an InteractionGroups filter so they don't collide with each other.
@@ -36,47 +37,27 @@ export function createRagdoll(
   spawn: THREE.Vector3,
   color = 0xff7a55,
 ): Ragdoll {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 });
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0 });
   const parts: Part[] = [];
 
-  function makeCapsule(centerWorld: THREE.Vector3, halfH: number, r: number): Part {
+  function makePart(name: PosePart, centerWorld: THREE.Vector3): Part {
+    const shape = PART_SHAPES[name];
     const body = world.createRigidBody(
       RAPIER.RigidBodyDesc.dynamic()
         .setTranslation(centerWorld.x, centerWorld.y, centerWorld.z)
         .setLinearDamping(0.05)
         .setAngularDamping(1.0),
     );
+    const colliderDesc = shape.kind === 'capsule'
+      ? RAPIER.ColliderDesc.capsule(shape.halfH, shape.r)
+      : RAPIER.ColliderDesc.ball(shape.r);
     world.createCollider(
-      RAPIER.ColliderDesc.capsule(halfH, r)
-        .setDensity(DENSITY)
-        .setCollisionGroups(RAGDOLL_GROUPS),
+      colliderDesc.setDensity(DENSITY).setCollisionGroups(RAGDOLL_GROUPS),
       body,
     );
-    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(r, halfH * 2, 6, 12), mat);
+    const mesh = buildPartVisual(name, mat);
     scene.add(mesh);
     const part: Part = { body, mesh, initialOffset: centerWorld.clone().sub(spawn) };
-    parts.push(part);
-    return part;
-  }
-
-  function makeBall(centerWorld: THREE.Vector3, r: number): Part {
-    const body = world.createRigidBody(
-      RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(centerWorld.x, centerWorld.y, centerWorld.z)
-        .setLinearDamping(0.05)
-        .setAngularDamping(1.0),
-    );
-    world.createCollider(
-      RAPIER.ColliderDesc.ball(r)
-        .setDensity(DENSITY)
-        .setCollisionGroups(RAGDOLL_GROUPS),
-      body,
-    );
-    const group = new THREE.Group();
-    const sphere = new THREE.Mesh(new THREE.SphereGeometry(r, 18, 14), mat);
-    group.add(sphere);
-    scene.add(group);
-    const part: Part = { body, mesh: group, initialOffset: centerWorld.clone().sub(spawn) };
     parts.push(part);
     return part;
   }
@@ -92,35 +73,23 @@ export function createRagdoll(
   }
 
   const torsoC = spawn.clone();
-  const torso = makeCapsule(torsoC, TH, TR);
+  const torso = makePart('torso', torsoC);
 
   const headC = torsoC.clone().add(new THREE.Vector3(0, TH + NECK_GAP + HR, 0));
-  const head = makeBall(headC, HR);
-
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0a0f24 });
-  const eyeR = HR * 0.13;
-  for (const side of [-1, 1] as const) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 8, 6), eyeMat);
-    eye.position.set(side * HR * 0.4, HR * 0.18, HR * 0.86);
-    head.mesh.add(eye);
-  }
+  const head = makePart('head', headC);
 
   spherical(torso, head, { x: 0, y: TH, z: 0 }, { x: 0, y: -HR, z: 0 });
 
-  function buildArm(side: -1 | 1): { upper: Part; forearm: Part } {
+  function buildArm(side: -1 | 1, prefix: 'armL' | 'armR'): { upper: Part; forearm: Part } {
     const shoulderW = torsoC.clone().add(
       new THREE.Vector3(side * SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, 0),
     );
     const upperC = shoulderW.clone().add(new THREE.Vector3(0, -UA, 0));
-    const upper = makeCapsule(upperC, UA, AR);
+    const upper = makePart(`${prefix}_upper` as PosePart, upperC);
 
     const elbowW = upperC.clone().add(new THREE.Vector3(0, -UA, 0));
     const forearmC = elbowW.clone().add(new THREE.Vector3(0, -FA, 0));
-    const forearm = makeCapsule(forearmC, FA, AR);
-
-    const hand = new THREE.Mesh(new THREE.SphereGeometry(AR * 1.4, 12, 8), mat);
-    hand.position.set(0, HAND_LOCAL_Y, 0);
-    forearm.mesh.add(hand);
+    const forearm = makePart(`${prefix}_forearm` as PosePart, forearmC);
 
     spherical(
       torso, upper,
@@ -135,21 +104,14 @@ export function createRagdoll(
     return { upper, forearm };
   }
 
-  function buildLeg(side: -1 | 1): { thigh: Part; shin: Part } {
+  function buildLeg(side: -1 | 1, prefix: 'legL' | 'legR'): { thigh: Part; shin: Part } {
     const hipW = torsoC.clone().add(new THREE.Vector3(side * HIP_OFFSET_X, -TH, 0));
     const thighC = hipW.clone().add(new THREE.Vector3(0, -TT, 0));
-    const thigh = makeCapsule(thighC, TT, LR);
+    const thigh = makePart(`${prefix}_thigh` as PosePart, thighC);
 
     const kneeW = thighC.clone().add(new THREE.Vector3(0, -TT, 0));
     const shinC = kneeW.clone().add(new THREE.Vector3(0, -SN, 0));
-    const shin = makeCapsule(shinC, SN, LR);
-
-    const foot = new THREE.Mesh(
-      new THREE.BoxGeometry(LR * 1.8, LR * 0.7, LR * 2.6),
-      mat,
-    );
-    foot.position.set(0, FOOT_LOCAL_Y, FOOT_LOCAL_Z);
-    shin.mesh.add(foot);
+    const shin = makePart(`${prefix}_shin` as PosePart, shinC);
 
     spherical(
       torso, thigh,
@@ -164,10 +126,10 @@ export function createRagdoll(
     return { thigh, shin };
   }
 
-  const armL = buildArm(-1);
-  const armR = buildArm(1);
-  const legL = buildLeg(-1);
-  const legR = buildLeg(1);
+  const armL = buildArm(-1, 'armL');
+  const armR = buildArm(1, 'armR');
+  const legL = buildLeg(-1, 'legL');
+  const legR = buildLeg(1, 'legR');
 
   // Index map for POSE_PART_ORDER — keep in sync with that array.
   const partsByName: Record<PosePart, Part> = {
