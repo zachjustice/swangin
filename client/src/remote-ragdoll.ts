@@ -43,7 +43,7 @@ export function createRemoteRagdoll(
   name: string,
   spawnHint: THREE.Vector3,
 ): RemoteRagdoll {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0 });
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 });
   const parts: RemotePart[] = [];
 
   function kinematicBody(at: THREE.Vector3): RAPIER.RigidBody {

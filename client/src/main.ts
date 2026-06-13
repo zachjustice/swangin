@@ -13,6 +13,7 @@ import { Grapple } from './grapple.ts';
 import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
 import { createOrb } from './orb.ts';
+import { MOVE_IMPULSE, MOVE_MAX_SPEED } from './constants.ts';
 
 const SKY = 0x3a5a8a;
 const FIXED_DT = 1 / 60;
@@ -119,6 +120,8 @@ function refreshBanner() {
 }
 refreshBanner();
 
+const keys = { w: false, a: false, s: false, d: false };
+
 let last = performance.now() / 1000;
 let accumulator = 0;
 
@@ -136,6 +139,24 @@ function checkRespawn() {
   ragdoll.respawn(SPAWN_POINT);
 }
 
+function applyMovementImpulse() {
+  if (!keys.w && !keys.a && !keys.s && !keys.d) return;
+  const yaw = tpCamera.yaw;
+  const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
+  const rx =  Math.cos(yaw), rz = -Math.sin(yaw);
+  let dx = 0, dz = 0;
+  if (keys.w) { dx += fx; dz += fz; }
+  if (keys.s) { dx -= fx; dz -= fz; }
+  if (keys.d) { dx += rx; dz += rz; }
+  if (keys.a) { dx -= rx; dz -= rz; }
+  const len = Math.sqrt(dx * dx + dz * dz);
+  if (len === 0) return;
+  dx /= len; dz /= len;
+  const v = ragdoll.torso.linvel();
+  if (Math.sqrt(v.x ** 2 + v.z ** 2) >= MOVE_MAX_SPEED) return;
+  ragdoll.torso.applyImpulse({ x: dx * MOVE_IMPULSE, y: 0, z: dz * MOVE_IMPULSE }, true);
+}
+
 // Multiplayer state — assigned after auth resolves below; tick() guards on null.
 let multiplayer: Multiplayer | null = null;
 
@@ -150,6 +171,7 @@ function tick() {
   while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
     ragdoll.motors.grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
     ragdoll.motors.update(FIXED_DT);
+    applyMovementImpulse();
     world.step();
     accumulator -= FIXED_DT;
     steps++;
@@ -259,5 +281,16 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'KeyR') {
     grapple.release();
     ragdoll.respawn(SPAWN_POINT);
+  } else if (e.code === 'KeyW') { keys.w = true;
+  } else if (e.code === 'KeyA') { keys.a = true;
+  } else if (e.code === 'KeyS') { keys.s = true;
+  } else if (e.code === 'KeyD') { keys.d = true;
   }
+});
+
+window.addEventListener('keyup', (e) => {
+  if (e.code === 'KeyW') keys.w = false;
+  else if (e.code === 'KeyA') keys.a = false;
+  else if (e.code === 'KeyS') keys.s = false;
+  else if (e.code === 'KeyD') keys.d = false;
 });

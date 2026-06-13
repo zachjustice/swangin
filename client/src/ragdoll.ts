@@ -37,7 +37,7 @@ export function createRagdoll(
   spawn: THREE.Vector3,
   color = 0xff7a55,
 ): Ragdoll {
-  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.85, metalness: 0 });
+  const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.55, metalness: 0.05 });
   const parts: Part[] = [];
 
   function makePart(name: PosePart, centerWorld: THREE.Vector3): Part {
