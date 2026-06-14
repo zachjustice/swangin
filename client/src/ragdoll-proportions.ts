@@ -70,14 +70,66 @@ export interface RagdollConfig {
 
 export const CONFIG = rawConfig as unknown as RagdollConfig;
 
-// --- Local-ragdoll parts share membership 0x0002 and a filter that masks 0x0002,
-// so they don't collide with each other (joint anchors sit on body surfaces).
-// Remote ragdolls live on 0x0004 so the local filter still lets them through —
-// that's what makes local↔remote contact (C11) work without re-enabling
-// local self-collisions.
+// --- Local-ragdoll collision groups.
+//
+// Membership bits in use across the project:
+//   0x0001  world cubes (lattice)
+//   0x0002  ragdoll-base — every local ragdoll part carries this; we mask it
+//           out of every local filter so unrelated parts can never collide
+//   0x0004  remote ragdoll
+//   0x0008  torso/head marker — enables arm/leg contact with head and torso
+//   0x0010  arm marker — enables torso/head contact with arms
+//   0x0020  thigh marker — enables torso + cross-side thigh contact
+//   0x0040  shin marker  — enables torso + cross-side shin contact
+//
+// Selective self-collision matrix:
+//   arms   ↔ {torso, head}
+//   thighs ↔ {torso}                — thigh-thigh OFF: capsules overlap
+//                                     at parallel rest (HIP_OFFSET_X
+//                                     ≈ 0.09 m), so contact would splay
+//                                     the legs.
+//   shins  ↔ {torso, other shins}   — shins are far enough apart at the
+//                                     knees that cross-side contact is
+//                                     fine.
+// Within one leg the thigh and shin do NOT collide — they share the knee
+// revolute and a permanent contact at the joint would fight the solver.
+// Cross-leg thigh ↔ shin is also off; rare in practice and avoiding it
+// keeps the matrix symmetric and simple.
+//
+// Filter format = bits we ACCEPT contact from. Pair test:
+// `(A.mem & B.fil) ≠ 0  AND  (B.mem & A.fil) ≠ 0`.
 export const RAGDOLL_MEMBERSHIP = 0x0002;
 export const RAGDOLL_FILTER = 0xfffd;
-export const RAGDOLL_GROUPS = (RAGDOLL_MEMBERSHIP << 16) | RAGDOLL_FILTER;
+
+const HEAD_TORSO_MEMBERSHIP = 0x0002 | 0x0008;
+const HEAD_TORSO_FILTER     = 0x0001 | 0x0004 | 0x0010 | 0x0020 | 0x0040; // cubes + remotes + arms + thighs + shins
+const ARM_MEMBERSHIP        = 0x0002 | 0x0010;
+const ARM_FILTER            = 0x0001 | 0x0004 | 0x0008; // cubes + remotes + head/torso
+// Thigh self-collision is OFF: with HIP_OFFSET_X ≈ 0.09 m, the two
+// thigh capsules overlap at parallel rest, and a contact-pair would
+// permanently push them outward into a splayed pose. Thighs still
+// collide with torso (via bit 0x0008) and cubes/remotes.
+const THIGH_MEMBERSHIP      = 0x0002 | 0x0020;
+const THIGH_FILTER          = 0x0001 | 0x0004 | 0x0008; // cubes + remotes + head/torso (no thigh-thigh)
+// Shins are further apart at the knees so cross-side shin contact can
+// stay on without splay regression.
+const SHIN_MEMBERSHIP       = 0x0002 | 0x0040;
+const SHIN_FILTER           = 0x0001 | 0x0004 | 0x0008 | 0x0040; // cubes + remotes + head/torso + other shins
+
+export const HEAD_TORSO_GROUPS = (HEAD_TORSO_MEMBERSHIP << 16) | HEAD_TORSO_FILTER;
+export const ARM_GROUPS        = (ARM_MEMBERSHIP        << 16) | ARM_FILTER;
+export const THIGH_GROUPS      = (THIGH_MEMBERSHIP      << 16) | THIGH_FILTER;
+export const SHIN_GROUPS       = (SHIN_MEMBERSHIP       << 16) | SHIN_FILTER;
+
+/** @deprecated Use THIGH_GROUPS / SHIN_GROUPS. Alias of THIGH_GROUPS so
+ *  any older import keeps building. */
+export const LEG_GROUPS = THIGH_GROUPS;
+
+/** @deprecated Use the per-role group (HEAD_TORSO_GROUPS / ARM_GROUPS /
+ *  THIGH_GROUPS / SHIN_GROUPS) instead. Kept as an alias of THIGH_GROUPS
+ *  so anything that imported the old "block all self-collision" mask
+ *  still works. */
+export const RAGDOLL_GROUPS = THIGH_GROUPS;
 
 export const REMOTE_RAGDOLL_MEMBERSHIP = 0x0004;
 export const REMOTE_RAGDOLL_FILTER = 0xfffb;

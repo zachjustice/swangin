@@ -2,14 +2,30 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { RagdollMotors, ChainNode, ConeNode } from './motors.ts';
 import {
-  ARM_HALF_LEN, ARM_SPREAD, LEG_SPREAD,
+  ARM_HALF_LEN, ARM_SPREAD,
   HEAD_OFFSET_Y, HEAD_RADIUS, HIP_OFFSET_Y,
-  RAGDOLL_GROUPS, PART_MASS,
+  HEAD_TORSO_GROUPS, ARM_GROUPS, THIGH_GROUPS, SHIN_GROUPS, PART_MASS,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
   SHIN_HALF_LEN, TORSO_HALF_HEIGHT, THIGH_HALF_LEN,
   MATERIAL,
   POSE_PART_ORDER, PosePart, PART_SHAPES, HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
+import {
+  ARM_CONE_HALF_ANGLE, ARM_CONE_KD, ARM_CONE_KP,
+  ARM_TOP_CLEARANCE,
+  HIP_TOP_CLEARANCE,
+  BODY_ANGULAR_DAMPING, BODY_LINEAR_DAMPING,
+  COLLIDER_FRICTION,
+  GRAPPLE_REACH_KD, GRAPPLE_REACH_KP,
+  HEAD_PD_KD, HEAD_PD_KP,
+  HIP_CONE_HALF_ANGLE, HIP_CONE_KD, HIP_CONE_KP, HIP_REST_SPREAD,
+  HIP_TWIST_KD, HIP_TWIST_KP,
+  KNEE_LIMIT_MAX, KNEE_LIMIT_MIN,
+  KNEE_MOTOR_DAMPING, KNEE_MOTOR_STIFFNESS,
+  SHIN_ANGULAR_DAMPING,
+  THIGH_ANGULAR_DAMPING,
+  TORSO_PD_KD, TORSO_PD_KP,
+} from './ragdoll-tuning.ts';
 import { buildPartVisual } from './ragdoll-visuals.ts';
 
 // 10-body skeleton joined by spherical joints (C5) + manual PD motors (C8).
@@ -52,8 +68,8 @@ export function createRagdoll(
     const shape = PART_SHAPES[name];
     const desc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(centerWorld.x, centerWorld.y, centerWorld.z)
-      .setLinearDamping(0.05)
-      .setAngularDamping(1.0);
+      .setLinearDamping(BODY_LINEAR_DAMPING)
+      .setAngularDamping(BODY_ANGULAR_DAMPING);
     if (initialRotation) {
       desc.setRotation({
         x: initialRotation.x, y: initialRotation.y,
@@ -61,14 +77,36 @@ export function createRagdoll(
       });
     }
     const body = world.createRigidBody(desc);
-    const colliderDesc = shape.kind === 'capsule'
+    let colliderDesc = shape.kind === 'capsule'
       ? RAPIER.ColliderDesc.capsule(shape.halfH, shape.r)
       : RAPIER.ColliderDesc.ball(shape.r);
+    if (name === 'armL' || name === 'armR') {
+      // Truncate the top of the arm collider so the shoulder anchor sits
+      // clear of the torso surface (see ARM_TOP_CLEARANCE comment).
+      const halfH = shape.kind === 'capsule'
+        ? shape.halfH - ARM_TOP_CLEARANCE / 2
+        : shape.r;
+      colliderDesc = RAPIER.ColliderDesc.capsule(halfH, shape.r as number)
+        .setTranslation(0, -ARM_TOP_CLEARANCE / 2, 0);
+    } else if (name === 'legL_thigh' || name === 'legR_thigh') {
+      // Same trick at the hip: trim the thigh collider's top so the
+      // spherical hip joint anchor sits clear of the torso surface.
+      const halfH = shape.kind === 'capsule'
+        ? shape.halfH - HIP_TOP_CLEARANCE / 2
+        : shape.r;
+      colliderDesc = RAPIER.ColliderDesc.capsule(halfH, shape.r as number)
+        .setTranslation(0, -HIP_TOP_CLEARANCE / 2, 0);
+    }
+    const groups =
+      name === 'torso' || name === 'head' ? HEAD_TORSO_GROUPS :
+        name === 'armL' || name === 'armR' ? ARM_GROUPS :
+          name === 'legL_thigh' || name === 'legR_thigh' ? THIGH_GROUPS :
+            SHIN_GROUPS;
     world.createCollider(
       colliderDesc
         .setMass(PART_MASS[name])
-        .setFriction(0.5)
-        .setCollisionGroups(RAGDOLL_GROUPS),
+        .setFriction(COLLIDER_FRICTION)
+        .setCollisionGroups(groups),
       body,
     );
     const mesh = buildPartVisual(name, mat);
@@ -148,7 +186,7 @@ export function createRagdoll(
   }
 
   function buildLeg(side: -1 | 1, prefix: 'legL' | 'legR'): { thigh: Part; shin: Part; restRot: THREE.Quaternion } {
-    const restRot = new THREE.Quaternion().setFromAxisAngle(Z_AXIS, side * LEG_SPREAD);
+    const restRot = new THREE.Quaternion().setFromAxisAngle(Z_AXIS, side * HIP_REST_SPREAD);
     const downRot = new THREE.Vector3(0, -1, 0).applyQuaternion(restRot);
 
     // Hip anchor uses the explicit HIP_OFFSET_Y so leg-top placement is no
@@ -166,6 +204,7 @@ export function createRagdoll(
       { x: side * HIP_OFFSET_X, y: HIP_OFFSET_Y, z: 0 },
       { x: 0, y: THIGH_HALF_LEN, z: 0 },
     );
+    thigh.body.setAngularDamping(THIGH_ANGULAR_DAMPING);
     // Knee: revolute hinge with limits + soft motor. Both thigh and shin
     // share restRot, so their local +X axes coincide in world space; the
     // hinge bends in the plane that contains the leg's length axis (i.e.
@@ -177,9 +216,10 @@ export function createRagdoll(
       { x: 0, y: -THIGH_HALF_LEN, z: 0 },
       { x: 0, y: SHIN_HALF_LEN, z: 0 },
       { x: 1, y: 0, z: 0 },
-      -2.6, 0.05,
-      0, 0.5, 0.2,
+      KNEE_LIMIT_MIN, KNEE_LIMIT_MAX,
+      0, KNEE_MOTOR_STIFFNESS, KNEE_MOTOR_DAMPING,
     );
+    shin.body.setAngularDamping(SHIN_ANGULAR_DAMPING);
     return { thigh, shin, restRot };
   }
 
@@ -230,37 +270,41 @@ export function createRagdoll(
   // the entire feel. The grapple-arm PD layered on top still steers the
   // right arm toward an anchor while the player is holding the grapple.
   const chain: ChainNode[] = [
-    { body: head.body, parent: torso.body, restLocalRotation: restIdentity, kp: 6, kd: 0.10 },
+    { body: head.body, parent: torso.body, restLocalRotation: restIdentity, kp: HEAD_PD_KP, kd: HEAD_PD_KD },
   ];
 
-  // Cone PD on shoulders + hips: limbs swing freely inside a 90° cone
-  // around their rest direction, and get a soft restoring torque only when
-  // pushed past it. Keeps arms hanging just outside the torso silhouette
-  // instead of straight through it.
+  // Cone PD on shoulders + hips: limbs swing freely inside a cone around
+  // their rest direction, and get a soft restoring torque only when
+  // pushed past it. Arm cone wide so grappling can reach across the body;
+  // hip cone tight + with a twist constraint so feet stay forward.
+  // All gains live in ragdoll-tuning.ts.
   const cones: ConeNode[] = [
-    { body: armL.arm.body,   parent: torso.body, restLocalRotation: armL.restRot, coneHalfAngle: Math.PI / 2, kp: 4, kd: 0.3 },
-    { body: armR.arm.body,   parent: torso.body, restLocalRotation: armR.restRot, coneHalfAngle: Math.PI / 2, kp: 4, kd: 0.3 },
-    { body: legL.thigh.body, parent: torso.body, restLocalRotation: legL.restRot, coneHalfAngle: Math.PI / 2, kp: 4, kd: 0.3 },
-    { body: legR.thigh.body, parent: torso.body, restLocalRotation: legR.restRot, coneHalfAngle: Math.PI / 2, kp: 4, kd: 0.3 },
+    { body: armL.arm.body, parent: torso.body, restLocalRotation: armL.restRot, coneHalfAngle: ARM_CONE_HALF_ANGLE, kp: ARM_CONE_KP, kd: ARM_CONE_KD },
+    { body: armR.arm.body, parent: torso.body, restLocalRotation: armR.restRot, coneHalfAngle: ARM_CONE_HALF_ANGLE, kp: ARM_CONE_KP, kd: ARM_CONE_KD },
+    { body: legL.thigh.body, parent: torso.body, restLocalRotation: legL.restRot, coneHalfAngle: HIP_CONE_HALF_ANGLE, kp: HIP_CONE_KP, kd: HIP_CONE_KD, kpTwist: HIP_TWIST_KP, kdTwist: HIP_TWIST_KD },
+    { body: legR.thigh.body, parent: torso.body, restLocalRotation: legR.restRot, coneHalfAngle: HIP_CONE_HALF_ANGLE, kp: HIP_CONE_KP, kd: HIP_CONE_KD, kpTwist: HIP_TWIST_KP, kdTwist: HIP_TWIST_KD },
   ];
 
   const motors = new RagdollMotors(
     torso.body,
-    50,
-    1.0,
+    TORSO_PD_KP,
+    TORSO_PD_KD,
     chain,
     cones,
     {
       arm: armR.arm.body,
       shoulderLocalOffset: new THREE.Vector3(SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, 0),
-      kpReach: 20,
-      kdReach: 0.3,
+      kpReach: GRAPPLE_REACH_KP,
+      kdReach: GRAPPLE_REACH_KD,
     },
   );
 
   console.log(
-    `[ragdoll] tuning — cone kp=${cones[0].kp} half=${(cones[0].coneHalfAngle * 180 / Math.PI).toFixed(0)}°, ` +
-    `knee motor stiff=0.5 damp=0.2, ` +
+    `[ragdoll] tuning — arm cone kp=${ARM_CONE_KP} half=${(ARM_CONE_HALF_ANGLE * 180 / Math.PI).toFixed(0)}°, ` +
+    `hip cone kp=${HIP_CONE_KP} half=${(HIP_CONE_HALF_ANGLE * 180 / Math.PI).toFixed(0)}° twist kp=${HIP_TWIST_KP}, ` +
+    `knee limits [${KNEE_LIMIT_MIN}, ${KNEE_LIMIT_MAX}] motor stiff=${KNEE_MOTOR_STIFFNESS}, ` +
+    `clearance arm=${ARM_TOP_CLEARANCE} hip=${HIP_TOP_CLEARANCE} (leg-vs-torso + leg-vs-leg colliders enabled), ` +
+    `damping shin=${SHIN_ANGULAR_DAMPING} thigh=${THIGH_ANGULAR_DAMPING} body=${BODY_ANGULAR_DAMPING}, ` +
     `mass torso=${PART_MASS.torso}kg arm=${PART_MASS.armL}kg head=${PART_MASS.head}kg`,
   );
 

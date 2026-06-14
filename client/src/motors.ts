@@ -27,6 +27,11 @@ export interface ChainNode {
 // is fully passive (sack-of-potatoes feel preserved); outside, torque
 // ramps with (θ − coneHalfAngle). Twist around the length axis is never
 // constrained — only swing.
+//
+// Optional twist PD: applies a separate restoring torque *along* the
+// limb's length axis to keep its local +Z aligned with the parent's
+// local +Z (rotated by restLocalRotation). Orthogonal to the cone PD's
+// swing torque — the two don't interact. Set kpTwist > 0 to enable.
 export interface ConeNode {
   body: RAPIER.RigidBody;
   parent: RAPIER.RigidBody;
@@ -36,6 +41,8 @@ export interface ConeNode {
   coneHalfAngle: number;
   kp: number;
   kd: number;
+  kpTwist?: number;
+  kdTwist?: number;
 }
 
 export interface GrappleArmConfig {
@@ -109,6 +116,12 @@ export class RagdollMotors {
       this.applyConePd(node, g, dt);
     }
 
+    for (const node of this.cones) {
+      if (reachActive && node.body === arm) continue;
+      if (!node.kpTwist || node.kpTwist <= 0) continue;
+      this.applyTwistPd(node, g, dt);
+    }
+
     if (reachActive) {
       const target = this.buildReachQuat();
       const { kpReach, kdReach } = this.grappleArm;
@@ -164,6 +177,67 @@ export class RagdollMotors {
 
     node.body.applyTorqueImpulse(
       { x: this.tmpAxis.x * impulse, y: this.tmpAxis.y * impulse, z: this.tmpAxis.z * impulse },
+      true,
+    );
+  }
+
+  // Twist-only restoring torque around the limb's length axis. Uses the
+  // body's local +Z as a "facing" reference and pulls it toward the
+  // parent's rotated +Z (same restLocalRotation as the cone's rest dir),
+  // projected into the plane perpendicular to the limb's length axis.
+  // Torque is parallel to lengthAxis, so it never contributes to swing.
+  private applyTwistPd(node: ConeNode, g: number, dt: number): void {
+    const parentRot = this.readRotation(node.parent, this.tmpQuat);
+    const bodyRot = this.readRotation(node.body, this.tmpConeQuat);
+
+    // lengthAxis = body.rotation × (0, -1, 0) — points hip → foot.
+    this.tmpCurrDir.copy(RagdollMotors.DOWN_LOCAL).applyQuaternion(bodyRot);
+
+    // bodyFront = body.rotation × (0, 0, 1), projected ⟂ lengthAxis.
+    this.tmpVec.set(0, 0, 1).applyQuaternion(bodyRot);
+    let dot = this.tmpVec.dot(this.tmpCurrDir);
+    this.tmpVec.addScaledVector(this.tmpCurrDir, -dot);
+    const bodyFrontLenSq = this.tmpVec.lengthSq();
+    if (bodyFrontLenSq < 1e-6) return; // body +Z parallel to length axis — degenerate
+    this.tmpVec.multiplyScalar(1 / Math.sqrt(bodyFrontLenSq));
+
+    // targetFront = parent.rotation × restLocalRotation × (0, 0, 1),
+    // projected ⟂ lengthAxis. lengthAxis itself comes from the live body
+    // pose, NOT the rest pose, so the projection plane is correct even
+    // when the leg has swung away from its rest direction.
+    this.tmpQuat2.copy(parentRot).multiply(node.restLocalRotation);
+    this.tmpVec2.set(0, 0, 1).applyQuaternion(this.tmpQuat2);
+    dot = this.tmpVec2.dot(this.tmpCurrDir);
+    this.tmpVec2.addScaledVector(this.tmpCurrDir, -dot);
+    const targetFrontLenSq = this.tmpVec2.lengthSq();
+    if (targetFrontLenSq < 1e-6) return;
+    this.tmpVec2.multiplyScalar(1 / Math.sqrt(targetFrontLenSq));
+
+    // Signed twist angle around lengthAxis: atan2(sin, cos) where
+    // sin = lengthAxis · (bodyFrontPerp × targetFrontPerp) and
+    // cos = bodyFrontPerp · targetFrontPerp.
+    this.tmpAxis.copy(this.tmpVec).cross(this.tmpVec2);
+    const sinT = this.tmpAxis.dot(this.tmpCurrDir);
+    const cosT = this.tmpVec.dot(this.tmpVec2);
+    const twistAng = Math.atan2(sinT, cosT);
+
+    const ang = node.body.angvel();
+    const omegaTwist =
+      ang.x * this.tmpCurrDir.x +
+      ang.y * this.tmpCurrDir.y +
+      ang.z * this.tmpCurrDir.z;
+
+    const kpT = (node.kpTwist ?? 0) * g;
+    const kdT = (node.kdTwist ?? 0) * g;
+    const tau = kpT * twistAng - kdT * omegaTwist;
+    const impulse = tau * dt;
+
+    node.body.applyTorqueImpulse(
+      {
+        x: this.tmpCurrDir.x * impulse,
+        y: this.tmpCurrDir.y * impulse,
+        z: this.tmpCurrDir.z * impulse,
+      },
       true,
     );
   }
