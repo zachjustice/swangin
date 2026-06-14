@@ -7,7 +7,7 @@ import {
   profileHalfHeight, profileMaxRadius, roundedSplinePoints,
   type Spline, type Profile,
 } from './ragdoll-spline-sampling.ts';
-import { buildFootGeometry } from './ragdoll-visuals.ts';
+import { buildFootGeometry, addHeadDecorations } from './ragdoll-visuals.ts';
 
 // Standalone prototype: a static, parametric ragdoll hung in space with a side
 // panel of sliders + 3 spline editors (torso, arm, leg). The arm and leg
@@ -103,8 +103,6 @@ function buildRagdoll(c: Config): { root: THREE.Group; material: THREE.Material;
     roughness: c.roughness,
     metalness: c.metalness,
   });
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0a0f24 });
-
   // Leg is sliced at its joint Y (knee). Arm is a single segment — its full
   // profile drives one mesh from shoulder to wrist.
   const armSide  = c.armSideProfile  as Profile;
@@ -132,12 +130,7 @@ function buildRagdoll(c: Config): { root: THREE.Group; material: THREE.Material;
   // Head — Y is the explicit headOffsetY (decoupled from torsoHalfHeight).
   const head = new THREE.Mesh(new THREE.SphereGeometry(c.headRadius, 20, 16), mat);
   head.position.set(0, c.headOffsetY, 0);
-  const eyeR = c.headRadius * c.eyeRRatio;
-  for (const side of [-1, 1] as const) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 10, 8), eyeMat);
-    eye.position.set(side * c.headRadius * 0.4, c.headRadius * 0.18, c.headRadius * 0.86);
-    head.add(eye);
-  }
+  const eyeMat = addHeadDecorations(head, c.headRadius, c.eyeRRatio);
   root.add(head);
 
   function limbMesh(front: Profile, side: Profile): THREE.Mesh {

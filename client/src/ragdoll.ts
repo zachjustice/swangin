@@ -21,7 +21,7 @@ import {
   HIP_CONE_HALF_ANGLE, HIP_CONE_KD, HIP_CONE_KP, HIP_REST_SPREAD,
   HIP_TWIST_KD, HIP_TWIST_KP,
   KNEE_LIMIT_MAX, KNEE_LIMIT_MIN,
-  KNEE_MOTOR_DAMPING, KNEE_MOTOR_STIFFNESS,
+  KNEE_MOTOR_DAMPING, KNEE_MOTOR_STIFFNESS, KNEE_REST_ANGLE,
   SHIN_ANGULAR_DAMPING,
   THIGH_ANGULAR_DAMPING,
   TORSO_PD_KD, TORSO_PD_KP,
@@ -215,9 +215,9 @@ export function createRagdoll(
       thigh, shin,
       { x: 0, y: -THIGH_HALF_LEN, z: 0 },
       { x: 0, y: SHIN_HALF_LEN, z: 0 },
-      { x: 1, y: 0, z: 0 },
+      { x: -1, y: 0, z: 0 },
       KNEE_LIMIT_MIN, KNEE_LIMIT_MAX,
-      0, KNEE_MOTOR_STIFFNESS, KNEE_MOTOR_DAMPING,
+      KNEE_REST_ANGLE, KNEE_MOTOR_STIFFNESS, KNEE_MOTOR_DAMPING,
     );
     shin.body.setAngularDamping(SHIN_ANGULAR_DAMPING);
     return { thigh, shin, restRot };

@@ -57,14 +57,43 @@ function buildPrimitive(
   return new THREE.Mesh(buildSweepGeometry(p.front, p.side, CONFIG.radialSegs), material);
 }
 
-function addEyes(parent: THREE.Object3D) {
-  const eyeMat = new THREE.MeshBasicMaterial({ color: 0x0a0f24 });
-  const eyeR = HEAD_RADIUS * CONFIG.eyeRRatio;
+// Eyes + smile on a head sphere of the given radius. Returns the shared
+// black material so callers that track lifetimes (e.g. the prototype rebuild
+// path) can dispose it.
+//
+// The smile is a thin half-torus arc placed on the face. Its z offset has
+// to exceed the head's surface depth at the smile's y/x — otherwise the
+// thin tube sits entirely inside the opaque head sphere and never renders.
+// (The eyes get away with a smaller z because their sphere radius is large
+// enough to poke through; the smile tube is too thin for that.)
+export function addHeadDecorations(
+  parent: THREE.Object3D,
+  headRadius: number,
+  eyeRRatio: number,
+): THREE.MeshBasicMaterial {
+  const mat = new THREE.MeshBasicMaterial({ color: 0x0a0f24 });
+
+  const eyeR = headRadius * eyeRRatio;
   for (const side of [-1, 1] as const) {
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 10, 8), eyeMat);
-    eye.position.set(side * HEAD_RADIUS * 0.4, HEAD_RADIUS * 0.18, HEAD_RADIUS * 0.86);
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(eyeR, 10, 8), mat);
+    eye.position.set(side * headRadius * 0.4, headRadius * 0.18, headRadius * 0.86);
     parent.add(eye);
   }
+
+  const mouthRadius = headRadius * 0.22;
+  const mouthTube = headRadius * 0.025;
+  // Shallow ⌣ — torus arc swept CCW from +X. Rotating by -π/2 - arc/2
+  // around Z lands the arc's midpoint at the bottom (angle -π/2).
+  const mouthArc = Math.PI * 0.55;
+  const mouth = new THREE.Mesh(
+    new THREE.TorusGeometry(mouthRadius, mouthTube, 8, 20, mouthArc),
+    mat,
+  );
+  mouth.rotation.z = -Math.PI / 2 - mouthArc / 2;
+  mouth.position.set(0, -headRadius * 0.18, headRadius * 0.95);
+  parent.add(mouth);
+
+  return mat;
 }
 
 // Custom flat-bottom foot — half-ellipsoid with a rounded-rect base. Cross-
@@ -188,7 +217,7 @@ export function buildPartVisual(
   const group = new THREE.Group();
   group.add(buildPrimitive(PART_SHAPES[name], material, name));
   if (name === 'head') {
-    addEyes(group);
+    addHeadDecorations(group, HEAD_RADIUS, CONFIG.eyeRRatio);
   } else if (name === 'legL_shin' || name === 'legR_shin') {
     addFoot(group, material);
   } else if (name === 'legL_thigh' || name === 'legR_thigh') {
