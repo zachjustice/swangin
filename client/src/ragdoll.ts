@@ -2,9 +2,11 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { RagdollMotors, ChainNode } from './motors.ts';
 import {
-  FA, HR, NECK_GAP, RAGDOLL_GROUPS, DENSITY,
+  FOREARM_HALF_LEN, HEAD_OFFSET_Y, HEAD_RADIUS, HIP_OFFSET_Y,
+  RAGDOLL_GROUPS, DENSITY,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
-  SN, TH, TT, UA, MATERIAL,
+  SHIN_HALF_LEN, TORSO_HALF_HEIGHT, THIGH_HALF_LEN,
+  UPPER_ARM_HALF_LEN, MATERIAL,
   POSE_PART_ORDER, PosePart, PART_SHAPES, HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
 import { buildPartVisual } from './ragdoll-visuals.ts';
@@ -75,53 +77,57 @@ export function createRagdoll(
   const torsoC = spawn.clone();
   const torso = makePart('torso', torsoC);
 
-  const headC = torsoC.clone().add(new THREE.Vector3(0, TH + NECK_GAP + HR, 0));
+  // Head anchors on the torso side at the torso cap (TORSO_HALF_HEIGHT) and on
+  // the head side at its bottom (-HEAD_RADIUS). The spawn height uses the
+  // explicit HEAD_OFFSET_Y so head/torso sizing can be tuned independently.
+  const headC = torsoC.clone().add(new THREE.Vector3(0, HEAD_OFFSET_Y, 0));
   const head = makePart('head', headC);
-
-  spherical(torso, head, { x: 0, y: TH, z: 0 }, { x: 0, y: -HR, z: 0 });
+  spherical(torso, head, { x: 0, y: TORSO_HALF_HEIGHT, z: 0 }, { x: 0, y: -HEAD_RADIUS, z: 0 });
 
   function buildArm(side: -1 | 1, prefix: 'armL' | 'armR'): { upper: Part; forearm: Part } {
     const shoulderW = torsoC.clone().add(
       new THREE.Vector3(side * SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, 0),
     );
-    const upperC = shoulderW.clone().add(new THREE.Vector3(0, -UA, 0));
+    const upperC = shoulderW.clone().add(new THREE.Vector3(0, -UPPER_ARM_HALF_LEN, 0));
     const upper = makePart(`${prefix}_upper` as PosePart, upperC);
 
-    const elbowW = upperC.clone().add(new THREE.Vector3(0, -UA, 0));
-    const forearmC = elbowW.clone().add(new THREE.Vector3(0, -FA, 0));
+    const elbowW = upperC.clone().add(new THREE.Vector3(0, -UPPER_ARM_HALF_LEN, 0));
+    const forearmC = elbowW.clone().add(new THREE.Vector3(0, -FOREARM_HALF_LEN, 0));
     const forearm = makePart(`${prefix}_forearm` as PosePart, forearmC);
 
     spherical(
       torso, upper,
       { x: side * SHOULDER_OFFSET_X, y: SHOULDER_OFFSET_Y, z: 0 },
-      { x: 0, y: UA, z: 0 },
+      { x: 0, y: UPPER_ARM_HALF_LEN, z: 0 },
     );
     spherical(
       upper, forearm,
-      { x: 0, y: -UA, z: 0 },
-      { x: 0, y: FA, z: 0 },
+      { x: 0, y: -UPPER_ARM_HALF_LEN, z: 0 },
+      { x: 0, y: FOREARM_HALF_LEN, z: 0 },
     );
     return { upper, forearm };
   }
 
   function buildLeg(side: -1 | 1, prefix: 'legL' | 'legR'): { thigh: Part; shin: Part } {
-    const hipW = torsoC.clone().add(new THREE.Vector3(side * HIP_OFFSET_X, -TH, 0));
-    const thighC = hipW.clone().add(new THREE.Vector3(0, -TT, 0));
+    // Hip anchor uses the explicit HIP_OFFSET_Y so leg-top placement is no
+    // longer coupled to torsoHalfHeight.
+    const hipW = torsoC.clone().add(new THREE.Vector3(side * HIP_OFFSET_X, HIP_OFFSET_Y, 0));
+    const thighC = hipW.clone().add(new THREE.Vector3(0, -THIGH_HALF_LEN, 0));
     const thigh = makePart(`${prefix}_thigh` as PosePart, thighC);
 
-    const kneeW = thighC.clone().add(new THREE.Vector3(0, -TT, 0));
-    const shinC = kneeW.clone().add(new THREE.Vector3(0, -SN, 0));
+    const kneeW = thighC.clone().add(new THREE.Vector3(0, -THIGH_HALF_LEN, 0));
+    const shinC = kneeW.clone().add(new THREE.Vector3(0, -SHIN_HALF_LEN, 0));
     const shin = makePart(`${prefix}_shin` as PosePart, shinC);
 
     spherical(
       torso, thigh,
-      { x: side * HIP_OFFSET_X, y: -TH, z: 0 },
-      { x: 0, y: TT, z: 0 },
+      { x: side * HIP_OFFSET_X, y: HIP_OFFSET_Y, z: 0 },
+      { x: 0, y: THIGH_HALF_LEN, z: 0 },
     );
     spherical(
       thigh, shin,
-      { x: 0, y: -TT, z: 0 },
-      { x: 0, y: SN, z: 0 },
+      { x: 0, y: -THIGH_HALF_LEN, z: 0 },
+      { x: 0, y: SHIN_HALF_LEN, z: 0 },
     );
     return { thigh, shin };
   }
