@@ -22,6 +22,22 @@ export interface ChainNode {
   kd: number;
 }
 
+// Cone PD: soft swing-only restoring torque applied when the limb's length
+// axis leaves a cone around its rest direction. Inside the cone, the limb
+// is fully passive (sack-of-potatoes feel preserved); outside, torque
+// ramps with (θ − coneHalfAngle). Twist around the length axis is never
+// constrained — only swing.
+export interface ConeNode {
+  body: RAPIER.RigidBody;
+  parent: RAPIER.RigidBody;
+  // Limb's rest orientation in parent-local space. The cone is centered on
+  // restDir = parent.rotation × restLocalRotation × (0,-1,0).
+  restLocalRotation: THREE.Quaternion;
+  coneHalfAngle: number;
+  kp: number;
+  kd: number;
+}
+
 export interface GrappleArmConfig {
   // The grapple arm is a single rigid body (no elbow). PD pulls it to reach
   // toward the anchor while grappling.
@@ -51,12 +67,21 @@ export class RagdollMotors {
   private readonly tmpZ = new THREE.Vector3();
   private readonly tmpMatrix = new THREE.Matrix4();
   private readonly identity = new THREE.Quaternion();
+  // Cone PD scratch — separate from the chain pool so the two loops can't
+  // stomp on each other's intermediates.
+  private readonly tmpRestDir = new THREE.Vector3();
+  private readonly tmpCurrDir = new THREE.Vector3();
+  private readonly tmpAxis = new THREE.Vector3();
+  private readonly tmpConeQuat = new THREE.Quaternion();
+  private readonly tmpFallback = new THREE.Vector3();
+  private static readonly DOWN_LOCAL = new THREE.Vector3(0, -1, 0);
 
   constructor(
     public torso: RAPIER.RigidBody,
     public torsoKp: number,
     public torsoKd: number,
     public chain: ChainNode[],
+    public cones: ConeNode[],
     public grappleArm: GrappleArmConfig,
   ) {}
 
@@ -79,11 +104,68 @@ export class RagdollMotors {
       this.applyPd(node.body, this.tmpQuatTarget, node.kp * g, node.kd * g, dt);
     }
 
+    for (const node of this.cones) {
+      if (reachActive && node.body === arm) continue;
+      this.applyConePd(node, g, dt);
+    }
+
     if (reachActive) {
       const target = this.buildReachQuat();
       const { kpReach, kdReach } = this.grappleArm;
       this.applyPd(arm, target, kpReach * g, kdReach * g, dt);
     }
+  }
+
+  // Swing-only restoring torque: if the limb's length axis is outside the
+  // rest-direction cone, apply torque along (currDir × restDir) — twist
+  // around the limb's length axis is left fully free.
+  private applyConePd(node: ConeNode, g: number, dt: number): void {
+    const parentRot = this.readRotation(node.parent, this.tmpQuat);
+    const bodyRot = this.readRotation(node.body, this.tmpConeQuat);
+
+    // restDir = parent.rotation × restLocalRotation × (0,-1,0)
+    this.tmpQuat2.copy(parentRot).multiply(node.restLocalRotation);
+    this.tmpRestDir.copy(RagdollMotors.DOWN_LOCAL).applyQuaternion(this.tmpQuat2);
+
+    // currDir = body.rotation × (0,-1,0)
+    this.tmpCurrDir.copy(RagdollMotors.DOWN_LOCAL).applyQuaternion(bodyRot);
+
+    const cosTheta = Math.max(-1, Math.min(1, this.tmpRestDir.dot(this.tmpCurrDir)));
+    const theta = Math.acos(cosTheta);
+    if (theta <= node.coneHalfAngle) return;
+
+    // Swing axis: currDir × restDir (perpendicular to both, points the way
+    // currDir needs to rotate to reach restDir).
+    this.tmpAxis.copy(this.tmpCurrDir).cross(this.tmpRestDir);
+    let axisLenSq = this.tmpAxis.lengthSq();
+    if (axisLenSq < 1e-6) {
+      // θ ≈ π — currDir is antiparallel to restDir, axis is degenerate.
+      // Pick any vector perpendicular to currDir (parent's +X projected).
+      this.tmpFallback.set(1, 0, 0).applyQuaternion(parentRot);
+      const dot = this.tmpFallback.dot(this.tmpCurrDir);
+      this.tmpFallback.addScaledVector(this.tmpCurrDir, -dot);
+      if (this.tmpFallback.lengthSq() < 1e-6) {
+        this.tmpFallback.set(0, 0, 1).applyQuaternion(parentRot);
+        const d2 = this.tmpFallback.dot(this.tmpCurrDir);
+        this.tmpFallback.addScaledVector(this.tmpCurrDir, -d2);
+      }
+      this.tmpAxis.copy(this.tmpFallback);
+      axisLenSq = this.tmpAxis.lengthSq();
+      if (axisLenSq < 1e-6) return;
+    }
+    this.tmpAxis.multiplyScalar(1 / Math.sqrt(axisLenSq));
+
+    const swingAng = theta - node.coneHalfAngle;
+    const ang = node.body.angvel();
+    const omegaSwing =
+      ang.x * this.tmpAxis.x + ang.y * this.tmpAxis.y + ang.z * this.tmpAxis.z;
+    const tauMag = (node.kp * g) * swingAng - (node.kd * g) * omegaSwing;
+    const impulse = tauMag * dt;
+
+    node.body.applyTorqueImpulse(
+      { x: this.tmpAxis.x * impulse, y: this.tmpAxis.y * impulse, z: this.tmpAxis.z * impulse },
+      true,
+    );
   }
 
   // Build a full-basis target quaternion for the grapple arm. Without an
