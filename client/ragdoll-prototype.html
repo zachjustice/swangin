@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ragdoll Prototype</title>
+    <style>
+      html, body {
+        margin: 0; padding: 0; height: 100%; overflow: hidden;
+        background: #0a1438; color: #e6ecff;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      }
+      #app { display: flex; height: 100vh; }
+      #viewport { flex: 1; position: relative; min-width: 0; }
+      #viewport canvas { display: block; }
+      #panel {
+        width: 380px; flex-shrink: 0;
+        background: #0a1438;
+        border-left: 1px solid #2a3458;
+        overflow-y: auto;
+        padding: 12px 14px;
+        box-sizing: border-box;
+        font-size: 12px;
+        line-height: 1.4;
+      }
+      #panel h2 {
+        font-size: 11px; font-weight: 600;
+        margin: 18px 0 6px; color: #9fb0e6;
+        text-transform: uppercase; letter-spacing: 0.08em;
+        border-bottom: 1px solid #1f2a52; padding-bottom: 4px;
+      }
+      #panel h2:first-child { margin-top: 4px; }
+      #panel .row {
+        display: grid;
+        grid-template-columns: 110px 1fr 56px;
+        align-items: center; gap: 6px;
+        margin-bottom: 3px;
+      }
+      #panel label {
+        color: #c0cdf0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 11px;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      #panel input[type="range"] { width: 100%; accent-color: #6a8aff; }
+      #panel input[type="number"] {
+        width: 56px; box-sizing: border-box;
+        background: #131c45; color: #e6ecff;
+        border: 1px solid #2a3458;
+        padding: 2px 4px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 10px;
+      }
+      #panel input[type="color"] {
+        width: 60px; height: 24px; padding: 0;
+        background: transparent;
+        border: 1px solid #2a3458;
+        cursor: pointer;
+      }
+      .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+      .actions button {
+        padding: 6px 10px;
+        background: #1a2454; color: #e6ecff;
+        border: 1px solid #3a4a8a; border-radius: 4px;
+        cursor: pointer; font-size: 11px;
+      }
+      .actions button:hover { background: #2a3a7a; }
+      .hint {
+        font-size: 10px; color: #6e7ea8;
+        padding: 4px 0; line-height: 1.4;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="viewport"></div>
+      <div id="panel"></div>
+    </div>
+    <script type="module" src="/src/ragdoll-prototype.ts"></script>
+  </body>
+</html>

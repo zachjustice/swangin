@@ -9,7 +9,7 @@ interface JoinOptions {
 }
 
 interface PoseClientMessage {
-  pose: number[]; // 70 floats — 10 × (pos.xyz, quat.xyzw) in POSE_PART_ORDER
+  pose: number[]; // 56 floats — 8 × (pos.xyz, quat.xyzw) in POSE_PART_ORDER
   grap: number[]; // 4 floats — [active, ax, ay, az]
 }
 
@@ -27,7 +27,7 @@ export class SwanginRoom extends Room<SwanginState> {
     this.onMessage<PoseClientMessage>('pose', (client, data) => {
       // No validation beyond array length — clients are authoritative for
       // their own pose by design (PLAN.md: client-authoritative model).
-      if (!data || !Array.isArray(data.pose) || data.pose.length !== 70) return;
+      if (!data || !Array.isArray(data.pose) || data.pose.length !== 56) return;
       if (!Array.isArray(data.grap) || data.grap.length !== 4) return;
       this.broadcast(
         'pose',

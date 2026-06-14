@@ -23,12 +23,12 @@ export interface ChainNode {
 }
 
 export interface GrappleArmConfig {
-  upperArm: RAPIER.RigidBody;
-  forearm: RAPIER.RigidBody;
+  // The grapple arm is a single rigid body (no elbow). PD pulls it to reach
+  // toward the anchor while grappling.
+  arm: RAPIER.RigidBody;
   // Where the shoulder sits in torso-local space; used to compute the reach
   // direction (anchor − shoulderWorld).
   shoulderLocalOffset: THREE.Vector3;
-  // Reach gains for upper arm; forearm uses half these so it lags.
   kpReach: number;
   kdReach: number;
 }
@@ -69,12 +69,10 @@ export class RagdollMotors {
     this.applyPd(this.torso, this.identity, this.torsoKp * g, this.torsoKd * g, dt);
 
     const reachActive = this.grappleAnchor !== null;
-    const { upperArm, forearm } = this.grappleArm;
+    const { arm } = this.grappleArm;
 
     for (const node of this.chain) {
-      const isReachBody =
-        reachActive && (node.body === upperArm || node.body === forearm);
-      if (isReachBody) continue;
+      if (reachActive && node.body === arm) continue;
 
       const parentRot = this.readRotation(node.parent, this.tmpQuat);
       this.tmpQuatTarget.copy(parentRot).multiply(node.restLocalRotation);
@@ -84,9 +82,7 @@ export class RagdollMotors {
     if (reachActive) {
       const target = this.buildReachQuat();
       const { kpReach, kdReach } = this.grappleArm;
-      this.applyPd(upperArm, target, kpReach * g, kdReach * g, dt);
-      // Forearm: half stiffness, half damping → trails the upper arm visibly.
-      this.applyPd(forearm, target, kpReach * 0.5 * g, kdReach * 0.5 * g, dt);
+      this.applyPd(arm, target, kpReach * g, kdReach * g, dt);
     }
   }
 

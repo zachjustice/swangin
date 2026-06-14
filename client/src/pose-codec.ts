@@ -1,10 +1,10 @@
 import RAPIER from '@dimforge/rapier3d-compat';
 
-// Pose wire format: a 70-float array [pos.xyz, quat.xyzw] × 10 in
+// Pose wire format: a 56-float array [pos.xyz, quat.xyzw] × 8 in
 // POSE_PART_ORDER. Grapple state ships separately as [active(0|1), ax, ay, az].
-// 70 floats × 4 B = 280 B per pose; at 20 Hz that's ~5.6 KB/s per player.
+// 56 floats × 4 B = 224 B per pose; at 20 Hz that's ~4.5 KB/s per player.
 
-export const POSE_FLOATS = 70;
+export const POSE_FLOATS = 56;
 
 export interface PoseMessage {
   pose: number[]; // length === POSE_FLOATS

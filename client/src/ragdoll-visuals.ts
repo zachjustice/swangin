@@ -3,10 +3,11 @@ import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   CONFIG, FOOT_LOCAL_Y, FOOT_LOCAL_Z, HEAD_RADIUS, SHIN_RADIUS,
   PART_SHAPES, PartShape, PosePart,
-  UPPER_ARM_FRONT_PROFILE, UPPER_ARM_SIDE_PROFILE,
-  FOREARM_FRONT_PROFILE,   FOREARM_SIDE_PROFILE,
-  THIGH_FRONT_PROFILE,     THIGH_SIDE_PROFILE,
-  SHIN_FRONT_PROFILE,      SHIN_SIDE_PROFILE,
+  ARM_FRONT_PROFILE,   ARM_SIDE_PROFILE,
+  THIGH_FRONT_PROFILE, THIGH_SIDE_PROFILE,
+  SHIN_FRONT_PROFILE,  SHIN_SIDE_PROFILE,
+  THIGH_HALF_LEN,
+  KNEE_FRONT_RADIUS, KNEE_SIDE_RADIUS,
 } from './ragdoll-proportions.ts';
 import { buildSweepGeometry, type Profile } from './ragdoll-spline-sampling.ts';
 
@@ -32,14 +33,12 @@ function buildTorsoGeometry(): THREE.BufferGeometry {
 // proportions module are pre-resolved (either pulled from JSON or derived
 // from the splines on the fly), so this is a pure lookup.
 const LIMB_PROFILES: Partial<Record<PosePart, { front: Profile; side: Profile }>> = {
-  armL_upper:   { front: UPPER_ARM_FRONT_PROFILE, side: UPPER_ARM_SIDE_PROFILE },
-  armR_upper:   { front: UPPER_ARM_FRONT_PROFILE, side: UPPER_ARM_SIDE_PROFILE },
-  armL_forearm: { front: FOREARM_FRONT_PROFILE,   side: FOREARM_SIDE_PROFILE },
-  armR_forearm: { front: FOREARM_FRONT_PROFILE,   side: FOREARM_SIDE_PROFILE },
-  legL_thigh:   { front: THIGH_FRONT_PROFILE,     side: THIGH_SIDE_PROFILE },
-  legR_thigh:   { front: THIGH_FRONT_PROFILE,     side: THIGH_SIDE_PROFILE },
-  legL_shin:    { front: SHIN_FRONT_PROFILE,      side: SHIN_SIDE_PROFILE },
-  legR_shin:    { front: SHIN_FRONT_PROFILE,      side: SHIN_SIDE_PROFILE },
+  armL:       { front: ARM_FRONT_PROFILE,   side: ARM_SIDE_PROFILE },
+  armR:       { front: ARM_FRONT_PROFILE,   side: ARM_SIDE_PROFILE },
+  legL_thigh: { front: THIGH_FRONT_PROFILE, side: THIGH_SIDE_PROFILE },
+  legR_thigh: { front: THIGH_FRONT_PROFILE, side: THIGH_SIDE_PROFILE },
+  legL_shin:  { front: SHIN_FRONT_PROFILE,  side: SHIN_SIDE_PROFILE },
+  legR_shin:  { front: SHIN_FRONT_PROFILE,  side: SHIN_SIDE_PROFILE },
 };
 
 function buildPrimitive(
@@ -164,6 +163,24 @@ function addFoot(parent: THREE.Object3D, material: THREE.MeshStandardMaterial) {
   parent.add(foot);
 }
 
+// Ellipsoid parented at the bottom of a segment, sized to the segment's seam
+// cross-section. Lives where the spherical joint anchors are, so when the
+// child segment bends, the ball fills the gap that would otherwise show as a
+// pair of flat exposed disks at the elbow / knee.
+function addJointBall(
+  parent: THREE.Object3D,
+  material: THREE.MeshStandardMaterial,
+  segmentHalfH: number,
+  frontR: number,
+  sideR: number,
+) {
+  const r = Math.max(frontR, sideR, 1e-4);
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), material);
+  ball.scale.set(frontR / r, 1, sideR / r);
+  ball.position.set(0, -segmentHalfH, 0);
+  parent.add(ball);
+}
+
 export function buildPartVisual(
   name: PosePart,
   material: THREE.MeshStandardMaterial,
@@ -174,6 +191,8 @@ export function buildPartVisual(
     addEyes(group);
   } else if (name === 'legL_shin' || name === 'legR_shin') {
     addFoot(group, material);
+  } else if (name === 'legL_thigh' || name === 'legR_thigh') {
+    addJointBall(group, material, THIGH_HALF_LEN, KNEE_FRONT_RADIUS, KNEE_SIDE_RADIUS);
   }
   return group;
 }
