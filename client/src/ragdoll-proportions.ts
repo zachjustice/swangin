@@ -77,17 +77,21 @@ export const CONFIG = rawConfig as unknown as RagdollConfig;
 //   0x0002  ragdoll-base — every local ragdoll part carries this; we mask it
 //           out of every local filter so unrelated parts can never collide
 //   0x0004  remote ragdoll
-//   0x0008  torso/head marker — enables arm/leg contact with head and torso
+//   0x0008  torso/head marker — enables arm contact with head and torso
 //   0x0010  arm marker — enables torso/head contact with arms
-//   0x0020  thigh marker — enables torso + cross-side thigh contact
+//   0x0020  thigh marker — reserved (no filter currently accepts it)
 //   0x0040  shin marker  — enables torso + cross-side shin contact
 //
 // Selective self-collision matrix:
 //   arms   ↔ {torso, head}
-//   thighs ↔ {torso}                — thigh-thigh OFF: capsules overlap
-//                                     at parallel rest (HIP_OFFSET_X
-//                                     ≈ 0.09 m), so contact would splay
-//                                     the legs.
+//   thighs ↔ {}                     — thigh-torso AND thigh-thigh OFF.
+//                                     HIP_OFFSET_X (~0.09 m) sits INSIDE
+//                                     the torso radius (0.12 m), so each
+//                                     thigh capsule (r ~0.08 m) deeply
+//                                     overlaps the torso's bottom
+//                                     hemisphere at rest — contact would
+//                                     splay the legs outward. Same logic
+//                                     for thigh-thigh.
 //   shins  ↔ {torso, other shins}   — shins are far enough apart at the
 //                                     knees that cross-side contact is
 //                                     fine.
@@ -102,15 +106,16 @@ export const RAGDOLL_MEMBERSHIP = 0x0002;
 export const RAGDOLL_FILTER = 0xfffd;
 
 const HEAD_TORSO_MEMBERSHIP = 0x0002 | 0x0008;
-const HEAD_TORSO_FILTER     = 0x0001 | 0x0004 | 0x0010 | 0x0020 | 0x0040; // cubes + remotes + arms + thighs + shins
+const HEAD_TORSO_FILTER     = 0x0001 | 0x0004 | 0x0010 | 0x0040; // cubes + remotes + arms + shins
 const ARM_MEMBERSHIP        = 0x0002 | 0x0010;
 const ARM_FILTER            = 0x0001 | 0x0004 | 0x0008; // cubes + remotes + head/torso
-// Thigh self-collision is OFF: with HIP_OFFSET_X ≈ 0.09 m, the two
-// thigh capsules overlap at parallel rest, and a contact-pair would
-// permanently push them outward into a splayed pose. Thighs still
-// collide with torso (via bit 0x0008) and cubes/remotes.
+// Thigh ↔ torso is OFF: the hip spherical-joint anchor sits inside the
+// torso surface (HIP_OFFSET_X ~0.09 m < TORSO_RADIUS 0.12 m), so the
+// thigh capsule penetrates the torso's bottom hemisphere at rest and
+// the contact-solver permanently splays the legs into an inverted Y.
+// Thigh-thigh is OFF for the same overlap-at-rest reason.
 const THIGH_MEMBERSHIP      = 0x0002 | 0x0020;
-const THIGH_FILTER          = 0x0001 | 0x0004 | 0x0008; // cubes + remotes + head/torso (no thigh-thigh)
+const THIGH_FILTER          = 0x0001 | 0x0004; // cubes + remotes only
 // Shins are further apart at the knees so cross-side shin contact can
 // stay on without splay regression.
 const SHIN_MEMBERSHIP       = 0x0002 | 0x0040;
