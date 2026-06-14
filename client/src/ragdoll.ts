@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { RagdollMotors, ChainNode } from './motors.ts';
+import { RagdollMotors, ChainNode, ConeNode } from './motors.ts';
 import {
   ARM_HALF_LEN, ARM_SPREAD, LEG_SPREAD,
   HEAD_OFFSET_Y, HEAD_RADIUS, HIP_OFFSET_Y,
-  RAGDOLL_GROUPS, DENSITY,
+  RAGDOLL_GROUPS, PART_MASS,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
   SHIN_HALF_LEN, TORSO_HALF_HEIGHT, THIGH_HALF_LEN,
   MATERIAL,
@@ -65,7 +65,10 @@ export function createRagdoll(
       ? RAPIER.ColliderDesc.capsule(shape.halfH, shape.r)
       : RAPIER.ColliderDesc.ball(shape.r);
     world.createCollider(
-      colliderDesc.setDensity(DENSITY).setCollisionGroups(RAGDOLL_GROUPS),
+      colliderDesc
+        .setMass(PART_MASS[name])
+        .setFriction(0.5)
+        .setCollisionGroups(RAGDOLL_GROUPS),
       body,
     );
     const mesh = buildPartVisual(name, mat);
@@ -87,6 +90,28 @@ export function createRagdoll(
   ) {
     const params = RAPIER.JointData.spherical(anchorA, anchorB);
     world.createImpulseJoint(params, a.body, b.body, true);
+  }
+
+  function revolute(
+    a: Part,
+    b: Part,
+    anchorA: { x: number; y: number; z: number },
+    anchorB: { x: number; y: number; z: number },
+    axisLocal: { x: number; y: number; z: number },
+    limitMin: number,
+    limitMax: number,
+    motorTarget: number,
+    motorStiffness: number,
+    motorDamping: number,
+  ) {
+    const params = RAPIER.JointData.revolute(anchorA, anchorB, axisLocal);
+    const j = world.createImpulseJoint(params, a.body, b.body, true);
+    // createImpulseJoint() returns the base ImpulseJoint type; the runtime
+    // instance for a revolute joint exposes setLimits / motor configuration.
+    const rj = j as unknown as RAPIER.RevoluteImpulseJoint;
+    rj.setLimits(limitMin, limitMax);
+    rj.configureMotorModel(RAPIER.MotorModel.ForceBased);
+    rj.configureMotorPosition(motorTarget, motorStiffness, motorDamping);
   }
 
   const torsoC = spawn.clone();
@@ -141,10 +166,19 @@ export function createRagdoll(
       { x: side * HIP_OFFSET_X, y: HIP_OFFSET_Y, z: 0 },
       { x: 0, y: THIGH_HALF_LEN, z: 0 },
     );
-    spherical(
+    // Knee: revolute hinge with limits + soft motor. Both thigh and shin
+    // share restRot, so their local +X axes coincide in world space; the
+    // hinge bends in the plane that contains the leg's length axis (i.e.
+    // forward/back, like a real knee). Limits: ~[-150°, +3°] — heel toward
+    // butt under impact, tiny slack past straight so the constraint isn't
+    // constantly active. Soft motor: gentle re-extension.
+    revolute(
       thigh, shin,
       { x: 0, y: -THIGH_HALF_LEN, z: 0 },
       { x: 0, y: SHIN_HALF_LEN, z: 0 },
+      { x: 1, y: 0, z: 0 },
+      -2.6, 0.05,
+      0, 0.5, 0.2,
     );
     return { thigh, shin, restRot };
   }
@@ -199,17 +233,35 @@ export function createRagdoll(
     { body: head.body, parent: torso.body, restLocalRotation: restIdentity, kp: 6, kd: 0.10 },
   ];
 
+  // Cone PD on shoulders + hips: limbs swing freely inside a 90° cone
+  // around their rest direction, and get a soft restoring torque only when
+  // pushed past it. Keeps arms hanging just outside the torso silhouette
+  // instead of straight through it.
+  const cones: ConeNode[] = [
+    { body: armL.arm.body,   parent: torso.body, restLocalRotation: armL.restRot, coneHalfAngle: Math.PI / 2, kp: 4, kd: 0.3 },
+    { body: armR.arm.body,   parent: torso.body, restLocalRotation: armR.restRot, coneHalfAngle: Math.PI / 2, kp: 4, kd: 0.3 },
+    { body: legL.thigh.body, parent: torso.body, restLocalRotation: legL.restRot, coneHalfAngle: Math.PI / 2, kp: 4, kd: 0.3 },
+    { body: legR.thigh.body, parent: torso.body, restLocalRotation: legR.restRot, coneHalfAngle: Math.PI / 2, kp: 4, kd: 0.3 },
+  ];
+
   const motors = new RagdollMotors(
     torso.body,
     50,
     1.0,
     chain,
+    cones,
     {
       arm: armR.arm.body,
       shoulderLocalOffset: new THREE.Vector3(SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, 0),
       kpReach: 20,
       kdReach: 0.3,
     },
+  );
+
+  console.log(
+    `[ragdoll] tuning — cone kp=${cones[0].kp} half=${(cones[0].coneHalfAngle * 180 / Math.PI).toFixed(0)}°, ` +
+    `knee motor stiff=0.5 damp=0.2, ` +
+    `mass torso=${PART_MASS.torso}kg arm=${PART_MASS.armL}kg head=${PART_MASS.head}kg`,
   );
 
   return {

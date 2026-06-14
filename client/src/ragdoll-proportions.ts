@@ -86,6 +86,20 @@ export const REMOTE_RAGDOLL_GROUPS =
 
 export const DENSITY = 50;
 
+// Per-part masses in kg. Overrides DENSITY (which would make the head
+// nearly as heavy as the torso at these proportions, so head bonks yank
+// the body). Humanoid-ish: heavy torso, light arms/head.
+export const PART_MASS: Record<PosePart, number> = {
+  torso: 5.0,
+  head: 1.0,
+  armL: 0.6,
+  armR: 0.6,
+  legL_thigh: 1.4,
+  legR_thigh: 1.4,
+  legL_shin: 0.9,
+  legR_shin: 0.9,
+};
+
 // --- Torso (kept as explicit knobs for now — the torso splines control its
 // silhouette but the capsule physics still uses these two scalars). ---
 export const TORSO_RADIUS = CONFIG.torsoRadius;
