@@ -61,6 +61,10 @@ export interface RagdollConfig {
   eyeRRatio: number;
   footW: number; footH: number; footD: number;
   footCornerRadius: number;
+  // Y of the foot dome's apex in shin-local coords. The foot's vertical
+  // extent is [footTopY − footH·SHIN_RADIUS, footTopY], so this directly
+  // controls where the top of the dome sits relative to the shin.
+  footTopY: number;
   color: string;
   roughness: number; metalness: number;
   armSpread: number; legSpread: number;
@@ -189,7 +193,9 @@ export const PART_SHAPES: Record<PosePart, PartShape> = {
 // Local-space mesh offsets for ornaments parented under a part (eyes, hand
 // sphere, feet). Used by the visual builder for both local and remote.
 export const HAND_LOCAL_Y = -FOREARM_HALF_LEN;
-export const FOOT_LOCAL_Y = -SHIN_HALF_LEN - SHIN_RADIUS * 0.3;
+// Foot mesh is centered at its own y=0, so to put its dome apex at
+// footTopY (shin-local) the mesh sits halfway-down from that apex.
+export const FOOT_LOCAL_Y = CONFIG.footTopY - (SHIN_RADIUS * CONFIG.footH) / 2;
 // Place the foot so its back face aligns with the back of the shin
 // (z = -SHIN_RADIUS): footCenterZ - footHalfDepth = -SHIN_RADIUS.
 export const FOOT_LOCAL_Z = SHIN_RADIUS * (CONFIG.footD / 2 - 1);
