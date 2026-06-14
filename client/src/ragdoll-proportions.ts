@@ -4,32 +4,63 @@
 // this exact order. Both peers must agree.
 //
 // All tunable values are sourced from ragdoll-config.json — the single source
-// of truth for player shape, segmentation, bumps, material, and pose. Tune
-// values via the ragdoll-prototype playground (logs JSON to console), then
-// paste into ragdoll-config.json and reload.
+// of truth for player shape, segmentation, material, and pose. Tune values
+// via the ragdoll-prototype playground (logs JSON to console), then paste
+// into ragdoll-config.json and reload.
+//
+// Body-part silhouettes (torso + 4 limb segments) are elliptical sweeps along
+// Y, with semi-axes from a pair of Catmull-Rom splines (Front + Side). Each
+// part's physics capsule is derived from its profiles: halfH = (yTop - yBot)/2
+// and r = max sampled radius across either profile. So the spline IS the
+// length, the spline IS the radius — no separate length/radius knobs.
 
 import rawConfig from './ragdoll-config.json' with { type: 'json' };
+import {
+  profileFromConfig, profileHalfHeight, profileMaxRadius, sliceProfileAtY,
+  type Profile, type Spline,
+} from './ragdoll-spline-sampling.ts';
 
 // Locked schema for the JSON. Extending the JSON means extending this type.
 export interface RagdollConfig {
-  TR: number; TH: number; HR: number;
-  AR: number; UA: number; FA: number;
-  LR: number; TT: number; SN: number;
-  NECK_GAP: number;
-  SHOULDER_OFFSET_X_GAP: number;
-  SHOULDER_OFFSET_Y: number;
-  HIP_OFFSET_X_RATIO: number;
-  torsoProfile: Array<[number, number]>;
-  upperArmTaperTop: number; upperArmTaperBot: number;
-  forearmTaperTop: number;  forearmTaperBot: number;
-  thighTaperTop: number;    thighTaperBot: number;
-  shinTaperTop: number;     shinTaperBot: number;
-  shoulderBumpX: number; shoulderBumpY: number; shoulderBumpR: number;
-  hipBumpX: number;      hipBumpY: number;      hipBumpR: number;
-  arcSteps: number; wallSteps: number;
-  radialSegs: number; torsoRadialSegs: number;
+  torsoRadius: number;
+  torsoHalfHeight: number;
+  headRadius: number;
+  headOffsetY: number;
+  hipOffsetY: number;
+  shoulderGapX: number;
+  shoulderOffsetY: number;
+  hipOffsetXRatio: number;
+
+  // Elliptical-sweep profiles (sampled) + splines (5 control points).
+  // For each part, side controls Z extent and front controls X extent.
+  // Profiles are optional in JSON — when missing the live game resamples
+  // from the splines on the fly.
+  torsoSideProfile: Profile;
+  torsoFrontProfile: Profile;
+  torsoSideSpline?: Spline;
+  torsoFrontSpline?: Spline;
+
+  // Whole-limb silhouette: one spline pair for the entire arm (shoulder→wrist)
+  // and entire leg (hip→ankle). The elbow / knee position is a separate Y
+  // value (in limb-local coords, between yTop and yBot) that splits the
+  // profile into upper + lower halves for the physics capsules.
+  armSideSpline: Spline;
+  armFrontSpline: Spline;
+  armSideProfile?: Profile;
+  armFrontProfile?: Profile;
+  armJointY: number;
+
+  legSideSpline: Spline;
+  legFrontSpline: Spline;
+  legSideProfile?: Profile;
+  legFrontProfile?: Profile;
+  legJointY: number;
+
+  radialSegs: number;
+  torsoRadialSegs: number;
   eyeRRatio: number;
   footW: number; footH: number; footD: number;
+  footCornerRadius: number;
   color: string;
   roughness: number; metalness: number;
   armSpread: number; legSpread: number;
@@ -53,22 +84,65 @@ export const REMOTE_RAGDOLL_GROUPS =
 
 export const DENSITY = 50;
 
-// --- Proportions (lengths / radii) ---
-export const TR = CONFIG.TR;
-export const TH = CONFIG.TH;
-export const HR = CONFIG.HR;
-export const AR = CONFIG.AR;
-export const UA = CONFIG.UA;
-export const FA = CONFIG.FA;
-export const LR = CONFIG.LR;
-export const TT = CONFIG.TT;
-export const SN = CONFIG.SN;
+// --- Torso (kept as explicit knobs for now — the torso splines control its
+// silhouette but the capsule physics still uses these two scalars). ---
+export const TORSO_RADIUS = CONFIG.torsoRadius;
+export const TORSO_HALF_HEIGHT = CONFIG.torsoHalfHeight;
+export const HEAD_RADIUS = CONFIG.headRadius;
+
+// --- Whole-limb profile + joint split ---
+// The arm and leg each ship as a single spline pair (shoulder→wrist for arm,
+// hip→ankle for leg). The elbow / knee Y splits the full profile into the
+// upper and lower physics segments; their flat faces meet flush at that Y.
+function resolveCompound(side: Spline | undefined, front: Spline | undefined,
+                         sideStored: Profile | undefined, frontStored: Profile | undefined,
+                         jointY: number, name: string) {
+  if (!side || !front) throw new Error(`ragdoll-config.json: missing ${name} splines`);
+  const full = profileFromConfig(sideStored, frontStored, side, front);
+  return sliceProfileAtY(full, jointY);
+}
+
+const armSplit = resolveCompound(CONFIG.armSideSpline, CONFIG.armFrontSpline,
+                                 CONFIG.armSideProfile, CONFIG.armFrontProfile,
+                                 CONFIG.armJointY, 'arm');
+const legSplit = resolveCompound(CONFIG.legSideSpline, CONFIG.legFrontSpline,
+                                 CONFIG.legSideProfile, CONFIG.legFrontProfile,
+                                 CONFIG.legJointY, 'leg');
+const upperArm = armSplit.upper;
+const forearm  = armSplit.lower;
+const thigh    = legSplit.upper;
+const shin     = legSplit.lower;
+
+export const UPPER_ARM_SIDE_PROFILE  = upperArm.side;
+export const UPPER_ARM_FRONT_PROFILE = upperArm.front;
+export const FOREARM_SIDE_PROFILE    = forearm.side;
+export const FOREARM_FRONT_PROFILE   = forearm.front;
+export const THIGH_SIDE_PROFILE      = thigh.side;
+export const THIGH_FRONT_PROFILE     = thigh.front;
+export const SHIN_SIDE_PROFILE       = shin.side;
+export const SHIN_FRONT_PROFILE      = shin.front;
+
+// --- Per-limb derived half-lengths and radii (physics capsule fits the
+// silhouette). ---
+export const UPPER_ARM_HALF_LEN = profileHalfHeight(upperArm.side);
+export const FOREARM_HALF_LEN   = profileHalfHeight(forearm.side);
+export const THIGH_HALF_LEN     = profileHalfHeight(thigh.side);
+export const SHIN_HALF_LEN      = profileHalfHeight(shin.side);
+
+export const UPPER_ARM_RADIUS = profileMaxRadius(upperArm.front, upperArm.side);
+export const FOREARM_RADIUS   = profileMaxRadius(forearm.front,  forearm.side);
+export const THIGH_RADIUS     = profileMaxRadius(thigh.front,    thigh.side);
+export const SHIN_RADIUS      = profileMaxRadius(shin.front,     shin.side);
 
 // --- Joint anchor offsets (also used by physics in ragdoll.ts) ---
-export const NECK_GAP = CONFIG.NECK_GAP;
-export const SHOULDER_OFFSET_X = TR + AR + CONFIG.SHOULDER_OFFSET_X_GAP;
-export const SHOULDER_OFFSET_Y = CONFIG.SHOULDER_OFFSET_Y;
-export const HIP_OFFSET_X = TR * CONFIG.HIP_OFFSET_X_RATIO;
+export const HEAD_OFFSET_Y = CONFIG.headOffsetY;
+export const HIP_OFFSET_Y = CONFIG.hipOffsetY;
+// Shoulder X anchor sits at the side of the torso + the upper arm's widest
+// section + the user's small tunable gap. Uses UPPER_ARM_RADIUS now that
+// "armRadius" is per-segment.
+export const SHOULDER_OFFSET_X = TORSO_RADIUS + UPPER_ARM_RADIUS + CONFIG.shoulderGapX;
+export const SHOULDER_OFFSET_Y = CONFIG.shoulderOffsetY;
+export const HIP_OFFSET_X = TORSO_RADIUS * CONFIG.hipOffsetXRatio;
 
 // --- Material settings shared by local + remote ragdoll materials ---
 export const MATERIAL = {
@@ -100,20 +174,22 @@ export type PartShape =
   | { kind: 'ball'; r: number };
 
 export const PART_SHAPES: Record<PosePart, PartShape> = {
-  torso: { kind: 'capsule', halfH: TH, r: TR },
-  head: { kind: 'ball', r: HR },
-  armL_upper: { kind: 'capsule', halfH: UA, r: AR },
-  armL_forearm: { kind: 'capsule', halfH: FA, r: AR },
-  armR_upper: { kind: 'capsule', halfH: UA, r: AR },
-  armR_forearm: { kind: 'capsule', halfH: FA, r: AR },
-  legL_thigh: { kind: 'capsule', halfH: TT, r: LR },
-  legL_shin: { kind: 'capsule', halfH: SN, r: LR },
-  legR_thigh: { kind: 'capsule', halfH: TT, r: LR },
-  legR_shin: { kind: 'capsule', halfH: SN, r: LR },
+  torso:        { kind: 'capsule', halfH: TORSO_HALF_HEIGHT,  r: TORSO_RADIUS },
+  head:         { kind: 'ball',    r: HEAD_RADIUS },
+  armL_upper:   { kind: 'capsule', halfH: UPPER_ARM_HALF_LEN, r: UPPER_ARM_RADIUS },
+  armL_forearm: { kind: 'capsule', halfH: FOREARM_HALF_LEN,   r: FOREARM_RADIUS },
+  armR_upper:   { kind: 'capsule', halfH: UPPER_ARM_HALF_LEN, r: UPPER_ARM_RADIUS },
+  armR_forearm: { kind: 'capsule', halfH: FOREARM_HALF_LEN,   r: FOREARM_RADIUS },
+  legL_thigh:   { kind: 'capsule', halfH: THIGH_HALF_LEN,     r: THIGH_RADIUS },
+  legL_shin:    { kind: 'capsule', halfH: SHIN_HALF_LEN,      r: SHIN_RADIUS },
+  legR_thigh:   { kind: 'capsule', halfH: THIGH_HALF_LEN,     r: THIGH_RADIUS },
+  legR_shin:    { kind: 'capsule', halfH: SHIN_HALF_LEN,      r: SHIN_RADIUS },
 };
 
 // Local-space mesh offsets for ornaments parented under a part (eyes, hand
 // sphere, feet). Used by the visual builder for both local and remote.
-export const HAND_LOCAL_Y = -FA;
-export const FOOT_LOCAL_Y = -SN - LR * 0.3;
-export const FOOT_LOCAL_Z = LR * 0.5;
+export const HAND_LOCAL_Y = -FOREARM_HALF_LEN;
+export const FOOT_LOCAL_Y = -SHIN_HALF_LEN - SHIN_RADIUS * 0.3;
+// Place the foot so its back face aligns with the back of the shin
+// (z = -SHIN_RADIUS): footCenterZ - footHalfDepth = -SHIN_RADIUS.
+export const FOOT_LOCAL_Z = SHIN_RADIUS * (CONFIG.footD / 2 - 1);

@@ -6,9 +6,9 @@ import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH } from './constants.ts';
 import {
-  FA, HR, NECK_GAP,
+  FOREARM_HALF_LEN, HEAD_OFFSET_Y, HEAD_RADIUS, HIP_OFFSET_Y,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
-  SN, TH, TT, UA, MATERIAL,
+  SHIN_HALF_LEN, THIGH_HALF_LEN, UPPER_ARM_HALF_LEN, MATERIAL,
   POSE_PART_ORDER, PosePart, PART_SHAPES, REMOTE_RAGDOLL_GROUPS,
   HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
@@ -73,15 +73,15 @@ export function createRemoteRagdoll(
   // bodies don't all start at the origin.
   const offsets: Record<PosePart, THREE.Vector3> = {
     torso: new THREE.Vector3(0, 0, 0),
-    head: new THREE.Vector3(0, TH + NECK_GAP + HR, 0),
-    armL_upper: new THREE.Vector3(-SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y - UA, 0),
-    armL_forearm: new THREE.Vector3(-SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y - 2 * UA - FA, 0),
-    armR_upper: new THREE.Vector3(SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y - UA, 0),
-    armR_forearm: new THREE.Vector3(SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y - 2 * UA - FA, 0),
-    legL_thigh: new THREE.Vector3(-HIP_OFFSET_X, -TH - TT, 0),
-    legL_shin: new THREE.Vector3(-HIP_OFFSET_X, -TH - 2 * TT - SN, 0),
-    legR_thigh: new THREE.Vector3(HIP_OFFSET_X, -TH - TT, 0),
-    legR_shin: new THREE.Vector3(HIP_OFFSET_X, -TH - 2 * TT - SN, 0),
+    head: new THREE.Vector3(0, HEAD_OFFSET_Y, 0),
+    armL_upper: new THREE.Vector3(-SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y - UPPER_ARM_HALF_LEN, 0),
+    armL_forearm: new THREE.Vector3(-SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y - 2 * UPPER_ARM_HALF_LEN - FOREARM_HALF_LEN, 0),
+    armR_upper: new THREE.Vector3(SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y - UPPER_ARM_HALF_LEN, 0),
+    armR_forearm: new THREE.Vector3(SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y - 2 * UPPER_ARM_HALF_LEN - FOREARM_HALF_LEN, 0),
+    legL_thigh: new THREE.Vector3(-HIP_OFFSET_X, HIP_OFFSET_Y - THIGH_HALF_LEN, 0),
+    legL_shin: new THREE.Vector3(-HIP_OFFSET_X, HIP_OFFSET_Y - 2 * THIGH_HALF_LEN - SHIN_HALF_LEN, 0),
+    legR_thigh: new THREE.Vector3(HIP_OFFSET_X, HIP_OFFSET_Y - THIGH_HALF_LEN, 0),
+    legR_shin: new THREE.Vector3(HIP_OFFSET_X, HIP_OFFSET_Y - 2 * THIGH_HALF_LEN - SHIN_HALF_LEN, 0),
   };
 
   const partsByName = {} as Record<PosePart, RemotePart>;
@@ -126,7 +126,7 @@ export function createRemoteRagdoll(
     'pointer-events: none',
   ].join(';');
   const label = new CSS2DObject(labelDiv);
-  label.position.set(0, HR + 0.25, 0);
+  label.position.set(0, HEAD_RADIUS + 0.25, 0);
   partsByName.head.mesh.add(label);
 
   const tmpHandWorld = new THREE.Vector3();
