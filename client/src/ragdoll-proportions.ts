@@ -141,6 +141,14 @@ export const REMOTE_RAGDOLL_FILTER = 0xfffb;
 export const REMOTE_RAGDOLL_GROUPS =
   (REMOTE_RAGDOLL_MEMBERSHIP << 16) | REMOTE_RAGDOLL_FILTER;
 
+// Union of every bit a ragdoll part (local or remote) carries in its
+// membership. Reticle / grapple raycasts mask this entire set out so the
+// targeting ray can never latch onto a body part. Masking only the
+// 0x0002 base bit isn't enough — head/torso/arm/thigh/shin each also
+// carry a role bit (0x0008…0x0040) that would otherwise satisfy the
+// pair test against a default-filter raycast.
+export const ALL_RAGDOLL_BITS = 0x0002 | 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040;
+
 export const DENSITY = 50;
 
 // Per-part masses in kg. Overrides DENSITY (which would make the head

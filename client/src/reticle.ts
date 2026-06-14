@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CUBE_SIZE } from './world.ts';
+import { ALL_RAGDOLL_BITS } from './ragdoll-proportions.ts';
 
-// InteractionGroups filter: query interacts with everyone except the ragdoll
-// group (bit 1). Cube colliders use default membership 0xFFFF, so they pass.
-const QUERY_GROUPS = (0xffff << 16) | 0xfffd;
+// InteractionGroups filter: query interacts with everyone except any bit
+// a ragdoll part carries (base + role bits — see ALL_RAGDOLL_BITS).
+// Cube colliders use default membership 0xFFFF, so they pass.
+const QUERY_GROUPS = (0xffff << 16) | (0xffff & ~ALL_RAGDOLL_BITS);
 const MAX_RAY_DIST = 200;
 
 export class CubeReticle {
