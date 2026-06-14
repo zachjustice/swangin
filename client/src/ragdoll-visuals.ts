@@ -3,10 +3,12 @@ import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import {
   CONFIG, FOOT_LOCAL_Y, FOOT_LOCAL_Z, HEAD_RADIUS, SHIN_RADIUS,
   PART_SHAPES, PartShape, PosePart,
-  ARM_FRONT_PROFILE,   ARM_SIDE_PROFILE,
+  ARM_UPPER_FRONT_PROFILE, ARM_UPPER_SIDE_PROFILE,
+  ARM_LOWER_FRONT_PROFILE, ARM_LOWER_SIDE_PROFILE,
   THIGH_FRONT_PROFILE, THIGH_SIDE_PROFILE,
   SHIN_FRONT_PROFILE,  SHIN_SIDE_PROFILE,
-  THIGH_HALF_LEN,
+  ARM_UPPER_HALF_LEN, THIGH_HALF_LEN,
+  ELBOW_FRONT_RADIUS, ELBOW_SIDE_RADIUS,
   KNEE_FRONT_RADIUS, KNEE_SIDE_RADIUS,
 } from './ragdoll-proportions.ts';
 import { buildSweepGeometry, type Profile } from './ragdoll-spline-sampling.ts';
@@ -33,8 +35,10 @@ function buildTorsoGeometry(): THREE.BufferGeometry {
 // proportions module are pre-resolved (either pulled from JSON or derived
 // from the splines on the fly), so this is a pure lookup.
 const LIMB_PROFILES: Partial<Record<PosePart, { front: Profile; side: Profile }>> = {
-  armL:       { front: ARM_FRONT_PROFILE,   side: ARM_SIDE_PROFILE },
-  armR:       { front: ARM_FRONT_PROFILE,   side: ARM_SIDE_PROFILE },
+  armUpperL:  { front: ARM_UPPER_FRONT_PROFILE, side: ARM_UPPER_SIDE_PROFILE },
+  armUpperR:  { front: ARM_UPPER_FRONT_PROFILE, side: ARM_UPPER_SIDE_PROFILE },
+  armLowerL:  { front: ARM_LOWER_FRONT_PROFILE, side: ARM_LOWER_SIDE_PROFILE },
+  armLowerR:  { front: ARM_LOWER_FRONT_PROFILE, side: ARM_LOWER_SIDE_PROFILE },
   legL_thigh: { front: THIGH_FRONT_PROFILE, side: THIGH_SIDE_PROFILE },
   legR_thigh: { front: THIGH_FRONT_PROFILE, side: THIGH_SIDE_PROFILE },
   legL_shin:  { front: SHIN_FRONT_PROFILE,  side: SHIN_SIDE_PROFILE },
@@ -222,6 +226,8 @@ export function buildPartVisual(
     addFoot(group, material);
   } else if (name === 'legL_thigh' || name === 'legR_thigh') {
     addJointBall(group, material, THIGH_HALF_LEN, KNEE_FRONT_RADIUS, KNEE_SIDE_RADIUS);
+  } else if (name === 'armUpperL' || name === 'armUpperR') {
+    addJointBall(group, material, ARM_UPPER_HALF_LEN, ELBOW_FRONT_RADIUS, ELBOW_SIDE_RADIUS);
   }
   return group;
 }

@@ -596,6 +596,7 @@
     ]
   ],
   "legJointY": 0.03456790123456793,
+  "armJointY": 0,
   "radialSegs": 20,
   "torsoRadialSegs": 35,
   "eyeRRatio": 0.135,
