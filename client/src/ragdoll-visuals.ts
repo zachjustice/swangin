@@ -68,33 +68,27 @@ function addEyes(parent: THREE.Object3D) {
   }
 }
 
-// Custom flat-bottom foot — like a simple shoe last. The bottom face is a
-// solid rounded rectangle sitting flat on the ground plane (no curve). The
-// vertical sides have rounded corners around the footprint perimeter. The
-// top edges roll inward over a quarter-circle of radius r to a flat top
-// ridge — gives the dome-on-a-sole silhouette of a shoe.
+// Custom flat-bottom foot — half-ellipsoid with a rounded-rect base. Cross-
+// sections at every height are similar rounded rectangles whose dimensions
+// scale by cos(θ) as the height rises by h·sin(θ); the dome converges to a
+// single apex at the top. Flat sole at y=-h/2, apex at y=+h/2.
 //
-// Geometry is centered at the origin: bottom face at y=-h/2, top at y=+h/2.
-// Drop-in for the old RoundedBoxGeometry call site (same center frame).
+// Geometry is centered at the origin so it drops into the existing FOOT_LOCAL_Y
+// positioning frame.
 export function buildFootGeometry(
   w: number, h: number, d: number, r: number,
-  cornerSegments = 6, domeSegments = 4,
+  cornerSegments = 8, domeSegments = 10,
 ): THREE.BufferGeometry {
-  // Clamp so the geometry stays sane while the user drags sliders.
-  r = Math.max(0, Math.min(r, Math.min(w, d) / 2 - 1e-4, h - 1e-4));
+  r = Math.max(0, Math.min(r, Math.min(w, d) / 2 - 1e-4));
 
-  // One ring of perimeter points at height y, optionally inset toward the
-  // central axis (the dome top is the same perimeter inset by r·(1−cos φ)).
-  // Vertices ordered CCW around +Y for consistent outward normals.
-  //
-  // ALWAYS emits `4 × cornerSegments` perimeter points, even when the corner
-  // radius collapses to zero — that keeps the vertex count constant across
-  // every ring so the side-band quad loop can index uniformly. Coincident
-  // verts are removed by the final mergeVertices() pass.
-  function ring(y: number, inset: number): [number, number, number][] {
-    const hw = w / 2 - inset;
-    const hd = d / 2 - inset;
-    const rc = Math.max(0, r - inset);
+  // One ring of perimeter points at height y, with the rounded-rect footprint
+  // uniformly scaled by `scale` (= cos θ). Always emits 4·cornerSegments
+  // points so vertex counts match across rings; mergeVertices collapses any
+  // coincident duplicates at the apex.
+  function ring(y: number, scale: number): [number, number, number][] {
+    const hw = (w / 2) * scale;
+    const hd = (d / 2) * scale;
+    const rc = r * scale;
     const corners: Array<[number, number, number]> = [
       [ hw - rc,  hd - rc, 0],              // +X +Z corner
       [-hw + rc,  hd - rc, Math.PI / 2],    // -X +Z corner
@@ -112,17 +106,13 @@ export function buildFootGeometry(
   }
 
   const yBot = -h / 2;
-  const yTop = h / 2;
-  const yWallTop = yTop - r;
-
-  // Ring stack: bottom (y=yBot), top-of-wall (y=yWallTop), then `domeSegments`
-  // rings curling inward+up to the top ridge at y=yTop.
+  // domeSegments+1 rings, from sole (θ=0, scale=1) to apex (θ=π/2, scale=0).
+  // θ-linear sampling auto-bunches near the apex (cosine-spaced in y) where
+  // the dome curvature is highest — same trick as the limb caps.
   const rings: [number, number, number][][] = [];
-  rings.push(ring(yBot, 0));
-  rings.push(ring(yWallTop, 0));
-  for (let s = 1; s <= domeSegments; s++) {
-    const phi = (Math.PI / 2) * (s / domeSegments);
-    rings.push(ring(yWallTop + r * Math.sin(phi), r * (1 - Math.cos(phi))));
+  for (let s = 0; s <= domeSegments; s++) {
+    const theta = (Math.PI / 2) * (s / domeSegments);
+    rings.push(ring(yBot + h * Math.sin(theta), Math.cos(theta)));
   }
 
   const N = rings[0].length;
@@ -130,12 +120,10 @@ export function buildFootGeometry(
   for (const rg of rings) for (const [x, y, z] of rg) positions.push(x, y, z);
   const bottomCenter = positions.length / 3;
   positions.push(0, yBot, 0);
-  const topCenter = positions.length / 3;
-  positions.push(0, yTop, 0);
 
   const indices: number[] = [];
-  // Side bands. Rings are CCW around +Y, so outward face uses winding
-  // (a, c, b) / (b, c, d) — same convention as buildSweepGeometry.
+  // Side bands. Rings walk CCW around +Y from above, so winding (a,c,b)/(b,c,d)
+  // gives outward normals — same convention as buildSweepGeometry.
   for (let row = 0; row < rings.length - 1; row++) {
     const b0 = row * N;
     const b1 = (row + 1) * N;
@@ -145,24 +133,20 @@ export function buildFootGeometry(
       indices.push(b0 + j, b1 + i, b1 + j);
     }
   }
-  // Bottom cap (fan from bottomCenter). Bottom-facing normal needs CW
-  // perimeter order when viewed from below.
+  // Bottom cap (fan from bottomCenter). For a −Y outward normal with the
+  // perimeter walking CCW from above, the fan goes (center, i, j) — NOT
+  // (center, j, i); the inverted winding was why the sole rendered invisible.
   for (let i = 0; i < N; i++) {
     const j = (i + 1) % N;
-    indices.push(bottomCenter, j, i);
-  }
-  // Top cap (fan from topCenter). Top-facing normal CCW when viewed from above.
-  const topBase = (rings.length - 1) * N;
-  for (let i = 0; i < N; i++) {
-    const j = (i + 1) % N;
-    indices.push(topCenter, topBase + i, topBase + j);
+    indices.push(bottomCenter, i, j);
   }
 
   const geom = new THREE.BufferGeometry();
   geom.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3));
   geom.setIndex(indices);
-  // Merge coincident verts at the top ridge if domeSegments collapsed inset
-  // past the side-corner radius — keeps the top shading smooth.
+  // Merge the coincident apex duplicates (cornerSegments·4 verts all at the
+  // top point) so computeVertexNormals averages a single smooth normal across
+  // all dome triangles at the apex.
   const merged = mergeVertices(geom, 1e-6);
   merged.computeVertexNormals();
   return merged;
