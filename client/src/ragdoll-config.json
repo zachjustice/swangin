@@ -604,8 +604,6 @@
   "footH": 0.85,
   "footD": 3.25,
   "footCornerRadius": 1,
-  "armSpread": 1.5707963267948966,
-  "legSpread": 0.08,
   "color": "#c45577",
   "roughness": 1,
   "metalness": 0,

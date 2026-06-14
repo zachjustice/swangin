@@ -156,7 +156,6 @@ function buildRagdoll(c: Config): { root: THREE.Group; material: THREE.Material;
   for (const side of [-1, 1] as const) {
     const armGroup = new THREE.Group();
     armGroup.position.set(side * SHX, SHY, 0);
-    armGroup.rotation.z = side * c.armSpread;
 
     const armMesh = limbMesh(armFront, armSide);
     armMesh.position.set(0, -armHalfH, 0);
@@ -165,11 +164,10 @@ function buildRagdoll(c: Config): { root: THREE.Group; material: THREE.Material;
     root.add(armGroup);
   }
 
-  // Legs: pivot at hipOffsetY, rotate outward by legSpread.
+  // Legs: pivot at hipOffsetY.
   for (const side of [-1, 1] as const) {
     const legGroup = new THREE.Group();
     legGroup.position.set(side * HX, c.hipOffsetY, 0);
-    legGroup.rotation.z = side * c.legSpread;
 
     const thigh = limbMesh(leg.upper.front, leg.upper.side);
     thigh.position.set(0, -thighHalfH, 0);
@@ -748,13 +746,6 @@ function buildUI(config: Config, rebuild: () => void) {
   sec = section('Head');
   slider(sec, 'Eye ratio', 0, 0.3, 0.005, config.eyeRRatio,
     (v) => { config.eyeRRatio = v; rebuild(); });
-
-  // Static pose
-  sec = section('Pose');
-  slider(sec, 'Arm spread',  0, Math.PI / 2, 0.01, config.armSpread,
-    (v) => { config.armSpread = v; rebuild(); });
-  slider(sec, 'Leg spread', -0.5, 0.8, 0.01, config.legSpread,
-    (v) => { config.legSpread = v; rebuild(); });
 
   // Material
   sec = section('Material');

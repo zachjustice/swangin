@@ -2,26 +2,33 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { RagdollMotors } from './motors.ts';
 import {
-  ARM_UPPER_HALF_LEN, ARM_LOWER_HALF_LEN, ARM_SPREAD,
+  ARM_UPPER_HALF_LEN, ARM_LOWER_HALF_LEN,
   HEAD_OFFSET_Y, HEAD_RADIUS, HIP_OFFSET_Y,
-  HEAD_TORSO_GROUPS, ARM_GROUPS, THIGH_GROUPS, SHIN_GROUPS, PART_MASS,
+  TORSO_GROUPS, LIMB_GROUPS, PART_MASS,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
-  SHIN_HALF_LEN, TORSO_HALF_HEIGHT, THIGH_HALF_LEN,
+  SHIN_HALF_LEN, THIGH_HALF_LEN,
   STIFFNESS_GAP,
   MATERIAL,
   POSE_PART_ORDER, PosePart, PART_SHAPES, HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
 import {
-  BODY_ANGULAR_DAMPING, BODY_LINEAR_DAMPING,
+  BODY_ANGULAR_DAMPING_TORSO, BODY_ANGULAR_DAMPING_LIMB, BODY_LINEAR_DAMPING,
   COLLIDER_FRICTION,
+  SHOULDER_KP, SHOULDER_KD,
+  ELBOW_KP, ELBOW_KD,
+  HIP_KP, HIP_KD,
+  KNEE_KP, KNEE_KD,
+  NECK_KP, NECK_KD,
 } from './ragdoll-tuning.ts';
 import { buildPartVisual } from './ragdoll-visuals.ts';
 
-// 10-body humanoid skeleton, joined entirely by spherical impulse joints
-// (mirror of mattvb91/rapierjs-ragdoll). No motors, no joint limits, no PD.
-// The "good feel" comes from gravity + selected mass ratios + STIFFNESS_GAP
-// at every joint anchor so parented colliders don't fight the contact solver
-// at rest.
+// 10-body humanoid skeleton, joined entirely by spherical impulse joints.
+// Cuboid limbs (flat-face contact at each joint brakes long-axis twist) +
+// full intra-ragdoll self-collision (the contact pairs ARE the pose-holding
+// mechanism, not the spherical joints, which only constrain position). Per-
+// joint PD in motors.ts pulls each child body back toward its rest-relative
+// orientation against its parent — the "mannequin recovery" return-to-pose
+// that makes a swing read as alive instead of as a thrown corpse.
 //
 // Joint list (9 total):
 //   torso ↔ head                        (neck)
@@ -29,8 +36,8 @@ import { buildPartVisual } from './ragdoll-visuals.ts';
 //   armUpperL ↔ armLowerL               (elbow L)
 //   armUpperR ↔ armLowerR               (elbow R)
 //   torso ↔ legL_thigh / legR_thigh     (hips)
-//   legL_thigh ↔ legL_shin              (knee L, now spherical not hinge)
-//   legR_thigh ↔ legR_shin              (knee R, now spherical not hinge)
+//   legL_thigh ↔ legL_shin              (knee L)
+//   legR_thigh ↔ legR_shin              (knee R)
 
 interface Part {
   body: RAPIER.RigidBody;
@@ -67,10 +74,12 @@ export function createRagdoll(
     initialRotation?: THREE.Quaternion,
   ): Part {
     const shape = PART_SHAPES[name];
+    const isTorsoOrHead = name === 'torso' || name === 'head';
+    const angularDamping = isTorsoOrHead ? BODY_ANGULAR_DAMPING_TORSO : BODY_ANGULAR_DAMPING_LIMB;
     const desc = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(centerWorld.x, centerWorld.y, centerWorld.z)
       .setLinearDamping(BODY_LINEAR_DAMPING)
-      .setAngularDamping(BODY_ANGULAR_DAMPING);
+      .setAngularDamping(angularDamping);
     if (initialRotation) {
       desc.setRotation({
         x: initialRotation.x, y: initialRotation.y,
@@ -78,15 +87,10 @@ export function createRagdoll(
       });
     }
     const body = world.createRigidBody(desc);
-    const colliderDesc = shape.kind === 'capsule'
-      ? RAPIER.ColliderDesc.capsule(shape.halfH, shape.r)
-      : RAPIER.ColliderDesc.ball(shape.r);
-    const groups =
-      name === 'torso' || name === 'head' ? HEAD_TORSO_GROUPS :
-        name === 'armUpperL' || name === 'armUpperR' ||
-          name === 'armLowerL' || name === 'armLowerR' ? ARM_GROUPS :
-          name === 'legL_thigh' || name === 'legR_thigh' ? THIGH_GROUPS :
-            SHIN_GROUPS;
+    const colliderDesc = shape.kind === 'ball'
+      ? RAPIER.ColliderDesc.ball(shape.r)
+      : RAPIER.ColliderDesc.cuboid(shape.hx, shape.hy, shape.hz);
+    const groups = isTorsoOrHead ? TORSO_GROUPS : LIMB_GROUPS;
     world.createCollider(
       colliderDesc
         .setMass(PART_MASS[name])
@@ -121,25 +125,32 @@ export function createRagdoll(
   // Head: torso-side anchor at the top cap + STIFFNESS_GAP; head-side
   // anchor at its bottom − STIFFNESS_GAP. Spawn the head at HEAD_OFFSET_Y
   // above the torso center (configured to leave a small gap to the cap).
+  // Head ball spawns at HEAD_OFFSET_Y above torso center; the joint anchors
+  // are derived from that actual spawn geometry rather than from a
+  // STIFFNESS_GAP-based formula, so head_anchor_world coincides with
+  // torso_anchor_world at t=0 and the solver applies no startup correction.
+  // (HEAD_OFFSET_Y in the config was authored independently of STIFFNESS_GAP;
+  // matching them with the gap-based offsets would re-introduce the 0.06 m
+  // joint violation that throws the chain at spawn.)
   const headC = torsoC.clone().add(new THREE.Vector3(0, HEAD_OFFSET_Y, 0));
   const head = makePart('head', headC);
   spherical(
     torso, head,
-    { x: 0, y: TORSO_HALF_HEIGHT + STIFFNESS_GAP, z: 0 },
-    { x: 0, y: -HEAD_RADIUS - STIFFNESS_GAP, z: 0 },
+    { x: 0, y: HEAD_OFFSET_Y - HEAD_RADIUS, z: 0 },
+    { x: 0, y: -HEAD_RADIUS, z: 0 },
   );
 
-  // Spread the arm/leg outward by `spread` radians around Z. The segment hangs
-  // along its body-local −Y, so rotating the body by R(Z, sign·spread) makes
-  // its length axis point in the corresponding outward direction.
-  const Z_AXIS = new THREE.Vector3(0, 0, 1);
+  // Arms and legs both hang straight down at rest (body-local −Y). The PD
+  // motors added in motors.ts capture parent-relative rotations at construction
+  // time, so the spawn pose IS the PD target — anything other than identity
+  // here would make PD permanently fight gravity to maintain that offset.
 
   function buildArm(side: -1 | 1, prefix: 'L' | 'R'): { upper: Part; lower: Part; restRot: THREE.Quaternion } {
-    const restRot = new THREE.Quaternion().setFromAxisAngle(Z_AXIS, side * ARM_SPREAD);
+    const restRot = new THREE.Quaternion();
     const downRot = new THREE.Vector3(0, -1, 0).applyQuaternion(restRot);
 
     // Upper arm: hangs from the shoulder + a small stiffness inset so the
-    // shoulder-end of the capsule sits clear of the torso surface.
+    // shoulder-end of the box sits clear of the torso surface.
     const shoulderW = torsoC.clone().add(
       new THREE.Vector3(side * SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, 0),
     );
@@ -242,20 +253,34 @@ export function createRagdoll(
 
   sync();
 
-  // Grapple reach impulse is the only "active" control now: it nudges the
-  // right forearm toward the anchor while a grapple is active.
+  // Active control:
+  //   - Grapple reach impulse on the right forearm toward the anchor.
+  //   - Per-joint PD (shoulders / elbows / hips / knees / neck) pulling each
+  //     child body back toward its rest-relative orientation against its
+  //     parent. PD captures the rest pose at registration time, so the spawn
+  //     pose IS the recovery target (legs hanging, arms at sides).
   const motors = new RagdollMotors(
     torso.body,
     armR.lower.body,
     new THREE.Vector3(SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, 0),
   );
 
+  motors.addJointPD(torso.body,      head.body,       NECK_KP,     NECK_KD);
+  motors.addJointPD(torso.body,      armL.upper.body, SHOULDER_KP, SHOULDER_KD);
+  motors.addJointPD(torso.body,      armR.upper.body, SHOULDER_KP, SHOULDER_KD);
+  motors.addJointPD(armL.upper.body, armL.lower.body, ELBOW_KP,    ELBOW_KD);
+  motors.addJointPD(armR.upper.body, armR.lower.body, ELBOW_KP,    ELBOW_KD);
+  motors.addJointPD(torso.body,      legL.thigh.body, HIP_KP,      HIP_KD);
+  motors.addJointPD(torso.body,      legR.thigh.body, HIP_KP,      HIP_KD);
+  motors.addJointPD(legL.thigh.body, legL.shin.body,  KNEE_KP,     KNEE_KD);
+  motors.addJointPD(legR.thigh.body, legR.shin.body,  KNEE_KP,     KNEE_KD);
+
   console.log(
-    `[ragdoll] passive skeleton — 10 bodies, 9 spherical joints, no motors. ` +
+    `[ragdoll] 10 bodies, 9 spherical joints, cuboid limbs, full self-collision. ` +
     `mass torso=${PART_MASS.torso}kg head=${PART_MASS.head}kg ` +
     `armUpper=${PART_MASS.armUpperL}kg armLower=${PART_MASS.armLowerL}kg ` +
     `thigh=${PART_MASS.legL_thigh}kg shin=${PART_MASS.legL_shin}kg, ` +
-    `damping linear=${BODY_LINEAR_DAMPING} angular=${BODY_ANGULAR_DAMPING}, ` +
+    `damping linear=${BODY_LINEAR_DAMPING} angular(torso/head)=${BODY_ANGULAR_DAMPING_TORSO} angular(limb)=${BODY_ANGULAR_DAMPING_LIMB}, ` +
     `stiffness gap=${STIFFNESS_GAP}m`,
   );
 

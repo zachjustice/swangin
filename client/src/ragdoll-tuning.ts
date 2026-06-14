@@ -20,15 +20,22 @@
 export const BODY_LINEAR_DAMPING = 0.05;
 
 /**
- * Angular damping applied to every ragdoll rigid body. Lower lets limbs
- * keep their swing energy longer (Gang-Beasts-y); higher kills oscillation
- * after impulses.
- * mattvb91 leaves this at Rapier's default. 0.2 here is light enough to
- * preserve floppy feel and high enough to suppress numerical jitter.
+ * Angular damping applied to the torso (and head). Lower lets the body
+ * swing freely on the grapple line.
  * Range: 0 (free spin) → 1.5 (sluggish).
- * Default: 0.2.
+ * Default: 0.05.
  */
-export const BODY_ANGULAR_DAMPING = 0.2;
+export const BODY_ANGULAR_DAMPING_TORSO = 0.05;
+
+/**
+ * Angular damping applied to every limb (arms + legs). Higher than the
+ * torso value so limbs visibly trail and lag through swing arcs — the
+ * core "organic cartoony swing" effect. The PD motors handle return-
+ * to-pose; this controls how fast the trail decays.
+ * Range: 0 (windsock) → 1.5 (sluggish).
+ * Default: 0.4.
+ */
+export const BODY_ANGULAR_DAMPING_LIMB = 0.4;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Collider
@@ -91,3 +98,37 @@ export const GRAPPLE_REACH_IMPULSE_ENABLED = true;
  * Default: 0.08.
  */
 export const GRAPPLE_REACH_IMPULSE_STRENGTH = 0.08;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-joint PD — mannequin recovery
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Each joint runs a PD controller that pulls the child body toward a
+// rest-relative orientation against its parent body. Tune live with the
+// `,` / `.` keys (scales all joints via motors.globalMultiplier).
+//
+// Scale note: this is a dollhouse-sized model — limb half-extents ~0.05-
+// 0.1 m, moments of inertia ~0.001-0.01 kg·m². KP is in units of N·m per
+// radian of error, so values that look "small" produce real torques here.
+// At KP=10 a 0.005 kg·m² thigh sees ~2000 rad/s² per rad of error → one
+// 1/60 substep would launch it at ~33 rad/s. Keep KP ≤ ~1.5 on the most
+// inertia-rich joint (the hip), proportionally less elsewhere.
+//
+// Motors start DISABLED — toggle with `M` once you've tuned. Wakes up
+// passive ragdoll for an A/B baseline. If a limb still explodes with
+// motors enabled, double the matching KD before raising KP.
+
+export const SHOULDER_KP = 0.4;
+export const SHOULDER_KD = 0.08;
+
+export const ELBOW_KP = 0.3;
+export const ELBOW_KD = 0.06;
+
+export const HIP_KP = 0.6;
+export const HIP_KD = 0.12;
+
+export const KNEE_KP = 0.3;
+export const KNEE_KD = 0.06;
+
+export const NECK_KP = 0.15;
+export const NECK_KD = 0.03;

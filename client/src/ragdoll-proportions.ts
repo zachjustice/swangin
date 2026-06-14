@@ -14,9 +14,11 @@
 //
 // Body-part silhouettes (torso + limb segments) are elliptical sweeps along
 // Y, with semi-axes from a pair of Catmull-Rom splines (Front + Side). Each
-// part's physics capsule is derived from its profiles: halfH = (yTop - yBot)/2
-// and r = max sampled radius across either profile. So the spline IS the
-// length, the spline IS the radius — no separate length/radius knobs.
+// part's physics box is derived from its profiles: halfH = (yTop - yBot)/2
+// (used as the Y half-extent of the cuboid collider) and r = max sampled
+// radius across either profile (used as the X/Z half-extent). So the
+// spline IS the length, the spline IS the radius — no separate length/
+// radius knobs.
 
 import rawConfig from './ragdoll-config.json' with { type: 'json' };
 import {
@@ -70,7 +72,6 @@ export interface RagdollConfig {
   footTopY: number;
   color: string;
   roughness: number; metalness: number;
-  armSpread: number; legSpread: number;
 }
 
 export const CONFIG = rawConfig as unknown as RagdollConfig;
@@ -79,53 +80,28 @@ export const CONFIG = rawConfig as unknown as RagdollConfig;
 //
 // Membership bits in use across the project:
 //   0x0001  world cubes (lattice)
-//   0x0002  ragdoll-base — every local ragdoll part carries this; we mask it
-//           out of every local filter so unrelated parts can never collide
+//   0x0002  torso/head — collides with cubes, remotes, and itself only.
+//           NOT with limbs: the shoulder/hip joint anchors sit just inside
+//           the torso radius (shoulderGapX=-0.08, HIP_OFFSET_X<TORSO_RADIUS),
+//           so the upper-arm and thigh cuboids interpenetrate the torso
+//           cuboid at spawn — if those contact pairs were enabled the
+//           solver would fight the joint constraints and the ragdoll
+//           would hang frozen at spawn instead of falling. Upper-arm and
+//           thigh long-axis twist is instead resisted by the PD motors.
 //   0x0004  remote ragdoll
-//   0x0008  torso/head marker — enables arm contact with head and torso
-//   0x0010  arm marker — enables torso/head contact with arms
-//   0x0020  thigh marker — reserved (no filter currently accepts it)
-//   0x0040  shin marker  — enables torso + cross-side shin contact
-//
-// Selective self-collision matrix:
-//   head ↔ torso              — ON. Critical: without this, the spherical
-//                                neck joint only constrains the head's
-//                                center to a fixed distance from the anchor
-//                                — it does NOT constrain rotation. With
-//                                no head PD (we deleted it), gravity pivots
-//                                the head around the anchor and the head
-//                                sphere sinks into the torso. The contact
-//                                solver is what keeps the head sitting ON
-//                                the torso top, same as mattvb91's cuboid
-//                                head resting on cuboid torso.
-//   arms   ↔ {}                — arm-vs-torso OFF. The shoulder joint anchor
-//                                sits inside the torso radius (the original
-//                                code worked around this with a 0.18 m
-//                                ARM_TOP_CLEARANCE collider trim); in the
-//                                passive setup we just exclude the contact
-//                                pair, same fix used for thigh-vs-torso.
-//                                Arm-vs-arm stays off (joint pair).
-//   thighs ↔ {}                — thigh-torso and thigh-thigh OFF; the hip
-//                                anchor also sits inside the torso radius.
-//   shins  ↔ {torso, head, other shins}
-// Within one leg the thigh and shin do NOT collide — they share the knee
-// joint and a permanent contact at the joint would fight the solver.
-export const RAGDOLL_MEMBERSHIP = 0x0002;
-export const RAGDOLL_FILTER = 0xfffd;
+//   0x0008  limb (arms + legs) — collides with cubes, remotes, and other
+//           limbs. Limb↔limb contact (forearm↔upper-arm at elbow,
+//           shin↔thigh at knee, cross-leg shin contact, etc.) is the
+//           mechanism that brakes long-axis twist on the elbow/knee
+//           segments — exactly the original "limbs spin freely" fix.
 
-const HEAD_TORSO_MEMBERSHIP = 0x0002 | 0x0008;
-const HEAD_TORSO_FILTER     = 0x0001 | 0x0004 | 0x0008 | 0x0040; // cubes + remotes + head/torso + shins
-const ARM_MEMBERSHIP        = 0x0002 | 0x0010;
-const ARM_FILTER            = 0x0001 | 0x0004; // cubes + remotes only
-const THIGH_MEMBERSHIP      = 0x0002 | 0x0020;
-const THIGH_FILTER          = 0x0001 | 0x0004; // cubes + remotes only
-const SHIN_MEMBERSHIP       = 0x0002 | 0x0040;
-const SHIN_FILTER           = 0x0001 | 0x0004 | 0x0008 | 0x0040; // cubes + remotes + head/torso + other shins
+// Torso + head share this group: collide with cubes, remotes, and each
+// other, but NOT with limbs.
+export const TORSO_GROUPS = (0x0002 << 16) | (0x0001 | 0x0002 | 0x0004);
 
-export const HEAD_TORSO_GROUPS = (HEAD_TORSO_MEMBERSHIP << 16) | HEAD_TORSO_FILTER;
-export const ARM_GROUPS        = (ARM_MEMBERSHIP        << 16) | ARM_FILTER;
-export const THIGH_GROUPS      = (THIGH_MEMBERSHIP      << 16) | THIGH_FILTER;
-export const SHIN_GROUPS       = (SHIN_MEMBERSHIP       << 16) | SHIN_FILTER;
+// All eight limbs share this group: collide with cubes, remotes, and
+// other limbs, but NOT with the torso/head.
+export const LIMB_GROUPS = (0x0008 << 16) | (0x0001 | 0x0004 | 0x0008);
 
 export const REMOTE_RAGDOLL_MEMBERSHIP = 0x0004;
 export const REMOTE_RAGDOLL_FILTER = 0xfffb;
@@ -135,20 +111,20 @@ export const REMOTE_RAGDOLL_GROUPS =
 // Union of every bit a ragdoll part (local or remote) carries in its
 // membership. Reticle / grapple raycasts mask this entire set out so the
 // targeting ray can never latch onto a body part.
-export const ALL_RAGDOLL_BITS = 0x0002 | 0x0004 | 0x0008 | 0x0010 | 0x0020 | 0x0040;
+export const ALL_RAGDOLL_BITS = 0x0002 | 0x0004 | 0x0008;
 
 export const DENSITY = 50;
 
-// --- Stiffness gap (mattvb91 trick).
+// --- Stiffness gap.
 //
-// Small inset applied at every joint anchor so two parented colliders don't
-// start interpenetrating at rest. mattvb91 uses 0.03 with cuboid colliders
-// (corners can dig in). With our capsule colliders the rounded caps touch
-// tangentially at a zero-gap joint without overlapping the parent's
-// interior, so the contact solver stays quiet. Defaulting to 0 preserves
-// the authored config's at-rest look exactly; bump this if a future tuning
-// pass ever shows joint jitter.
-export const STIFFNESS_GAP = 0;
+// Small inset applied at every joint anchor (except head — see ragdoll.ts).
+// Tiny because limb↔torso self-collision is filtered off (TORSO_GROUPS vs
+// LIMB_GROUPS), so the only same-ragdoll flat-on-flat contact is
+// upper-arm↔forearm at the elbow and thigh↔shin at the knee — both
+// vertically stacked cuboids with matching X/Z extent that touch
+// face-to-face. 5 mm is enough margin for the contact solver and
+// imperceptible visually; 30 mm was leaving a visible joint gap.
+export const STIFFNESS_GAP = 0.005;
 
 // --- 10 body parts in a stable order. Used for pose serialization and to
 // keep the local ragdoll's parts[] aligned with what gets sent on the wire.
@@ -184,7 +160,7 @@ export const PART_MASS: Record<PosePart, number> = {
 };
 
 // --- Torso (kept as explicit knobs for now — the torso splines control its
-// silhouette but the capsule physics still uses these two scalars). ---
+// silhouette but the cuboid physics still uses these two scalars). ---
 export const TORSO_RADIUS = CONFIG.torsoRadius;
 export const TORSO_HALF_HEIGHT = CONFIG.torsoHalfHeight;
 export const HEAD_RADIUS = CONFIG.headRadius;
@@ -221,7 +197,7 @@ export const THIGH_FRONT_PROFILE = thigh.front;
 export const SHIN_SIDE_PROFILE  = shin.side;
 export const SHIN_FRONT_PROFILE = shin.front;
 
-// --- Per-limb derived half-lengths and radii (physics capsule fits the
+// --- Per-limb derived half-lengths and radii (physics box fits the
 // silhouette). ---
 export const ARM_UPPER_HALF_LEN = profileHalfHeight(upperArm.side);
 export const ARM_LOWER_HALF_LEN = profileHalfHeight(lowerArm.side);
@@ -262,12 +238,6 @@ export const SHOULDER_OFFSET_X = TORSO_RADIUS + ARM_UPPER_RADIUS + CONFIG.should
 export const SHOULDER_OFFSET_Y = CONFIG.shoulderOffsetY;
 export const HIP_OFFSET_X = TORSO_RADIUS * CONFIG.hipOffsetXRatio;
 
-// --- Rest pose: arm and leg spread from the shoulder / hip (radians around Z).
-// In the passive ragdoll these only set the spawn pose; gravity pulls limbs
-// to their natural hang within a beat regardless of the spread value.
-export const ARM_SPREAD = CONFIG.armSpread;
-export const LEG_SPREAD = CONFIG.legSpread;
-
 // --- Material settings shared by local + remote ragdoll materials ---
 export const MATERIAL = {
   roughness: CONFIG.roughness,
@@ -275,22 +245,29 @@ export const MATERIAL = {
 } as const;
 
 // Geometry spec per body (used by both the visual builder and the kinematic
-// remote builder so capsule/sphere shapes line up exactly).
+// remote builder so physics shapes line up exactly). Limbs and torso are
+// cuboids so flat-face contact at each joint brakes long-axis twist (a
+// capsule is rotationally symmetric and a spherical joint imposes no twist
+// limit, so capsule limbs spin freely). Half-extents are (r, halfH, r) so
+// the box face coincides with the joint anchor (which sits at the end of
+// the cylindrical section, e.g. ARM_UPPER_HALF_LEN + STIFFNESS_GAP) and
+// two parented boxes meet flat-to-flat across the STIFFNESS_GAP inset.
+// The head stays a ball — visual outranks neck-twist behavior.
 export type PartShape =
-  | { kind: 'capsule'; halfH: number; r: number }
+  | { kind: 'cuboid'; hx: number; hy: number; hz: number }
   | { kind: 'ball'; r: number };
 
 export const PART_SHAPES: Record<PosePart, PartShape> = {
-  torso:      { kind: 'capsule', halfH: TORSO_HALF_HEIGHT, r: TORSO_RADIUS },
-  head:       { kind: 'ball',    r: HEAD_RADIUS },
-  armUpperL:  { kind: 'capsule', halfH: ARM_UPPER_HALF_LEN, r: ARM_UPPER_RADIUS },
-  armLowerL:  { kind: 'capsule', halfH: ARM_LOWER_HALF_LEN, r: ARM_LOWER_RADIUS },
-  armUpperR:  { kind: 'capsule', halfH: ARM_UPPER_HALF_LEN, r: ARM_UPPER_RADIUS },
-  armLowerR:  { kind: 'capsule', halfH: ARM_LOWER_HALF_LEN, r: ARM_LOWER_RADIUS },
-  legL_thigh: { kind: 'capsule', halfH: THIGH_HALF_LEN,    r: THIGH_RADIUS },
-  legL_shin:  { kind: 'capsule', halfH: SHIN_HALF_LEN,     r: SHIN_RADIUS },
-  legR_thigh: { kind: 'capsule', halfH: THIGH_HALF_LEN,    r: THIGH_RADIUS },
-  legR_shin:  { kind: 'capsule', halfH: SHIN_HALF_LEN,     r: SHIN_RADIUS },
+  torso:      { kind: 'cuboid', hx: TORSO_RADIUS,     hy: TORSO_HALF_HEIGHT, hz: TORSO_RADIUS },
+  head:       { kind: 'ball',   r:  HEAD_RADIUS },
+  armUpperL:  { kind: 'cuboid', hx: ARM_UPPER_RADIUS, hy: ARM_UPPER_HALF_LEN, hz: ARM_UPPER_RADIUS },
+  armLowerL:  { kind: 'cuboid', hx: ARM_LOWER_RADIUS, hy: ARM_LOWER_HALF_LEN, hz: ARM_LOWER_RADIUS },
+  armUpperR:  { kind: 'cuboid', hx: ARM_UPPER_RADIUS, hy: ARM_UPPER_HALF_LEN, hz: ARM_UPPER_RADIUS },
+  armLowerR:  { kind: 'cuboid', hx: ARM_LOWER_RADIUS, hy: ARM_LOWER_HALF_LEN, hz: ARM_LOWER_RADIUS },
+  legL_thigh: { kind: 'cuboid', hx: THIGH_RADIUS,     hy: THIGH_HALF_LEN,    hz: THIGH_RADIUS },
+  legL_shin:  { kind: 'cuboid', hx: SHIN_RADIUS,      hy: SHIN_HALF_LEN,     hz: SHIN_RADIUS },
+  legR_thigh: { kind: 'cuboid', hx: THIGH_RADIUS,     hy: THIGH_HALF_LEN,    hz: THIGH_RADIUS },
+  legR_shin:  { kind: 'cuboid', hx: SHIN_RADIUS,      hy: SHIN_HALF_LEN,     hz: SHIN_RADIUS },
 };
 
 // Local-space mesh offsets for ornaments parented under a part (eyes, hand

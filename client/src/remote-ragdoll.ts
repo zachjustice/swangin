@@ -57,9 +57,9 @@ export function createRemoteRagdoll(
   function buildPart(name: PosePart, center: THREE.Vector3): RemotePart {
     const shape = PART_SHAPES[name];
     const body = kinematicBody(center);
-    const colliderDesc = shape.kind === 'capsule'
-      ? RAPIER.ColliderDesc.capsule(shape.halfH, shape.r)
-      : RAPIER.ColliderDesc.ball(shape.r);
+    const colliderDesc = shape.kind === 'ball'
+      ? RAPIER.ColliderDesc.ball(shape.r)
+      : RAPIER.ColliderDesc.cuboid(shape.hx, shape.hy, shape.hz);
     world.createCollider(
       colliderDesc.setCollisionGroups(REMOTE_RAGDOLL_GROUPS),
       body,
@@ -150,7 +150,7 @@ export function createRemoteRagdoll(
     const active = grap[0] > 0.5;
     if (active) {
       // Hand world position from right forearm transform + HAND_LOCAL_Y offset
-      // (HAND_LOCAL_Y is the wrist, i.e. the bottom of the forearm capsule).
+      // (HAND_LOCAL_Y is the wrist, i.e. the bottom of the forearm box).
       const ro = POSE_PART_ORDER.indexOf('armLowerR') * 7;
       tmpHandQuat.set(pose[ro + 3], pose[ro + 4], pose[ro + 5], pose[ro + 6]);
       tmpHandWorld.set(0, HAND_LOCAL_Y, 0).applyQuaternion(tmpHandQuat);
