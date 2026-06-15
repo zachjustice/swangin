@@ -25,10 +25,9 @@ interface JointPD {
 
 export class RagdollMotors {
   // Toggleable from main.ts (M key) for A/B comparison. When false, all
-  // assists are skipped — pure passive ragdoll. Default off so the
-  // character lands in a stable passive state on first load; toggle on
-  // once you've verified the geometry/joints aren't fighting.
-  enabled = false;
+  // assists are skipped — pure passive ragdoll. On by default: PD return-
+  // to-pose is the core of the "organic cartoony swing" target.
+  enabled = true;
   // Scales the torso righting torque, the grapple reach impulse, and every
   // per-joint PD.
   globalMultiplier = 1.0;

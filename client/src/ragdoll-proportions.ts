@@ -78,30 +78,33 @@ export const CONFIG = rawConfig as unknown as RagdollConfig;
 
 // --- Local-ragdoll collision groups.
 //
-// Membership bits in use across the project:
-//   0x0001  world cubes (lattice)
-//   0x0002  torso/head — collides with cubes, remotes, and itself only.
-//           NOT with limbs: the shoulder/hip joint anchors sit just inside
-//           the torso radius (shoulderGapX=-0.08, HIP_OFFSET_X<TORSO_RADIUS),
-//           so the upper-arm and thigh cuboids interpenetrate the torso
-//           cuboid at spawn — if those contact pairs were enabled the
-//           solver would fight the joint constraints and the ragdoll
-//           would hang frozen at spawn instead of falling. Upper-arm and
-//           thigh long-axis twist is instead resisted by the PD motors.
+// Three-group split because the joint anchors are inside the visual torso:
+// shoulder is ~0.05 m inside (shoulderGapX=-0.08), hip is essentially AT the
+// torso centerline (HIP_OFFSET_X ≈ 0.088, THIGH_RADIUS ≈ 0.087). Arms can
+// safely contact the torso once the torso physics box is shrunk to a narrow
+// pillar (TORSO_PHYS_HX, defined below) that clears the arm's inboard edge
+// at spawn. Thighs can't be cleared by any non-negative torso width, so
+// thigh↔torso stays off; the user-visible "arm trapped inside body"
+// complaint is the arms case, and arms-on resolves it.
+//
+// Membership bits:
+//   0x0001  world cubes (lattice) — default for cube colliders
+//   0x0002  torso + head
 //   0x0004  remote ragdoll
-//   0x0008  limb (arms + legs) — collides with cubes, remotes, and other
-//           limbs. Limb↔limb contact (forearm↔upper-arm at elbow,
-//           shin↔thigh at knee, cross-leg shin contact, etc.) is the
-//           mechanism that brakes long-axis twist on the elbow/knee
-//           segments — exactly the original "limbs spin freely" fix.
+//   0x0008  arm (upper + forearm, both sides)
+//   0x0010  leg (thigh + shin, both sides)
+//
+// Self-collision matrix:
+//   torso ↔ arm    ON   ← stops arms sitting inside the body
+//   torso ↔ leg    OFF  ← irreducible spawn overlap (anchor inside torso)
+//   arm   ↔ leg    ON
+//   arm   ↔ arm    ON   ← forearm↔upper-arm at elbow brakes elbow twist
+//   leg   ↔ leg    ON   ← shin↔thigh at knee brakes knee twist
+//   torso ↔ torso  ON   ← head↔torso contact stabilises the neck
 
-// Torso + head share this group: collide with cubes, remotes, and each
-// other, but NOT with limbs.
-export const TORSO_GROUPS = (0x0002 << 16) | (0x0001 | 0x0002 | 0x0004);
-
-// All eight limbs share this group: collide with cubes, remotes, and
-// other limbs, but NOT with the torso/head.
-export const LIMB_GROUPS = (0x0008 << 16) | (0x0001 | 0x0004 | 0x0008);
+export const TORSO_GROUPS = (0x0002 << 16) | (0x0001 | 0x0002 | 0x0004 | 0x0008);
+export const ARM_GROUPS   = (0x0008 << 16) | (0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010);
+export const LEG_GROUPS   = (0x0010 << 16) | (0x0001 | 0x0004 | 0x0008 | 0x0010);
 
 export const REMOTE_RAGDOLL_MEMBERSHIP = 0x0004;
 export const REMOTE_RAGDOLL_FILTER = 0xfffb;
@@ -111,7 +114,20 @@ export const REMOTE_RAGDOLL_GROUPS =
 // Union of every bit a ragdoll part (local or remote) carries in its
 // membership. Reticle / grapple raycasts mask this entire set out so the
 // targeting ray can never latch onto a body part.
-export const ALL_RAGDOLL_BITS = 0x0002 | 0x0004 | 0x0008;
+export const ALL_RAGDOLL_BITS = 0x0002 | 0x0004 | 0x0008 | 0x0010;
+
+// --- Torso physics half-width (X and Z).
+//
+// Narrower than the visual silhouette (TORSO_RADIUS = 0.12). The shoulder
+// joint anchor sits inside the visual torso by ~0.05 m (shoulderGapX is
+// negative on purpose, to make arms hang visually flush with the body),
+// so a full-width physics torso would have the upper-arm cuboid
+// interpenetrating the torso cuboid by ~0.08 m at spawn. A narrow vertical
+// pillar clears that — arm inboard edge at SHOULDER_OFFSET_X −
+// ARM_UPPER_RADIUS ≈ 0.040, this pillar's edge at TORSO_PHYS_HX = 0.030,
+// 10 mm of margin. The visual torso mesh stays at full spline width;
+// only physics narrows.
+export const TORSO_PHYS_HX = 0.03;
 
 export const DENSITY = 50;
 
@@ -258,7 +274,7 @@ export type PartShape =
   | { kind: 'ball'; r: number };
 
 export const PART_SHAPES: Record<PosePart, PartShape> = {
-  torso:      { kind: 'cuboid', hx: TORSO_RADIUS,     hy: TORSO_HALF_HEIGHT, hz: TORSO_RADIUS },
+  torso:      { kind: 'cuboid', hx: TORSO_PHYS_HX,    hy: TORSO_HALF_HEIGHT, hz: TORSO_PHYS_HX },
   head:       { kind: 'ball',   r:  HEAD_RADIUS },
   armUpperL:  { kind: 'cuboid', hx: ARM_UPPER_RADIUS, hy: ARM_UPPER_HALF_LEN, hz: ARM_UPPER_RADIUS },
   armLowerL:  { kind: 'cuboid', hx: ARM_LOWER_RADIUS, hy: ARM_LOWER_HALF_LEN, hz: ARM_LOWER_RADIUS },

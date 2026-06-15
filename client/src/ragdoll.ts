@@ -4,7 +4,7 @@ import { RagdollMotors } from './motors.ts';
 import {
   ARM_UPPER_HALF_LEN, ARM_LOWER_HALF_LEN,
   HEAD_OFFSET_Y, HEAD_RADIUS, HIP_OFFSET_Y,
-  TORSO_GROUPS, LIMB_GROUPS, PART_MASS,
+  TORSO_GROUPS, ARM_GROUPS, LEG_GROUPS, PART_MASS,
   SHOULDER_OFFSET_X, SHOULDER_OFFSET_Y, HIP_OFFSET_X,
   SHIN_HALF_LEN, THIGH_HALF_LEN,
   STIFFNESS_GAP,
@@ -90,7 +90,12 @@ export function createRagdoll(
     const colliderDesc = shape.kind === 'ball'
       ? RAPIER.ColliderDesc.ball(shape.r)
       : RAPIER.ColliderDesc.cuboid(shape.hx, shape.hy, shape.hz);
-    const groups = isTorsoOrHead ? TORSO_GROUPS : LIMB_GROUPS;
+    const groups = isTorsoOrHead
+      ? TORSO_GROUPS
+      : (name === 'armUpperL' || name === 'armUpperR'
+          || name === 'armLowerL' || name === 'armLowerR')
+        ? ARM_GROUPS
+        : LEG_GROUPS;
     world.createCollider(
       colliderDesc
         .setMass(PART_MASS[name])
