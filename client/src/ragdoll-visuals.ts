@@ -6,10 +6,11 @@ import {
   ARM_UPPER_FRONT_PROFILE, ARM_UPPER_SIDE_PROFILE,
   ARM_LOWER_FRONT_PROFILE, ARM_LOWER_SIDE_PROFILE,
   THIGH_FRONT_PROFILE, THIGH_SIDE_PROFILE,
-  SHIN_FRONT_PROFILE,  SHIN_SIDE_PROFILE,
+  SHIN_FRONT_PROFILE, SHIN_SIDE_PROFILE,
   ARM_UPPER_HALF_LEN, THIGH_HALF_LEN,
   ELBOW_FRONT_RADIUS, ELBOW_SIDE_RADIUS,
   KNEE_FRONT_RADIUS, KNEE_SIDE_RADIUS,
+  STIFFNESS_GAP,
 } from './ragdoll-proportions.ts';
 import { buildSweepGeometry, type Profile } from './ragdoll-spline-sampling.ts';
 
@@ -35,14 +36,14 @@ function buildTorsoGeometry(): THREE.BufferGeometry {
 // proportions module are pre-resolved (either pulled from JSON or derived
 // from the splines on the fly), so this is a pure lookup.
 const LIMB_PROFILES: Partial<Record<PosePart, { front: Profile; side: Profile }>> = {
-  armUpperL:  { front: ARM_UPPER_FRONT_PROFILE, side: ARM_UPPER_SIDE_PROFILE },
-  armUpperR:  { front: ARM_UPPER_FRONT_PROFILE, side: ARM_UPPER_SIDE_PROFILE },
-  armLowerL:  { front: ARM_LOWER_FRONT_PROFILE, side: ARM_LOWER_SIDE_PROFILE },
-  armLowerR:  { front: ARM_LOWER_FRONT_PROFILE, side: ARM_LOWER_SIDE_PROFILE },
+  armUpperL: { front: ARM_UPPER_FRONT_PROFILE, side: ARM_UPPER_SIDE_PROFILE },
+  armUpperR: { front: ARM_UPPER_FRONT_PROFILE, side: ARM_UPPER_SIDE_PROFILE },
+  armLowerL: { front: ARM_LOWER_FRONT_PROFILE, side: ARM_LOWER_SIDE_PROFILE },
+  armLowerR: { front: ARM_LOWER_FRONT_PROFILE, side: ARM_LOWER_SIDE_PROFILE },
   legL_thigh: { front: THIGH_FRONT_PROFILE, side: THIGH_SIDE_PROFILE },
   legR_thigh: { front: THIGH_FRONT_PROFILE, side: THIGH_SIDE_PROFILE },
-  legL_shin:  { front: SHIN_FRONT_PROFILE,  side: SHIN_SIDE_PROFILE },
-  legR_shin:  { front: SHIN_FRONT_PROFILE,  side: SHIN_SIDE_PROFILE },
+  legL_shin: { front: SHIN_FRONT_PROFILE, side: SHIN_SIDE_PROFILE },
+  legR_shin: { front: SHIN_FRONT_PROFILE, side: SHIN_SIDE_PROFILE },
 };
 
 function buildPrimitive(
@@ -122,10 +123,10 @@ export function buildFootGeometry(
     const hd = (d / 2) * scale;
     const rc = r * scale;
     const corners: Array<[number, number, number]> = [
-      [ hw - rc,  hd - rc, 0],              // +X +Z corner
-      [-hw + rc,  hd - rc, Math.PI / 2],    // -X +Z corner
+      [hw - rc, hd - rc, 0],              // +X +Z corner
+      [-hw + rc, hd - rc, Math.PI / 2],    // -X +Z corner
       [-hw + rc, -hd + rc, Math.PI],        // -X -Z corner
-      [ hw - rc, -hd + rc, Math.PI * 1.5],  // +X -Z corner
+      [hw - rc, -hd + rc, Math.PI * 1.5],  // +X -Z corner
     ];
     const out: [number, number, number][] = [];
     for (const [cx, cz, a0] of corners) {
@@ -196,10 +197,14 @@ function addFoot(parent: THREE.Object3D, material: THREE.MeshStandardMaterial) {
   parent.add(foot);
 }
 
-// Ellipsoid parented at the bottom of a segment, sized to the segment's seam
-// cross-section. Lives where the spherical joint anchors are, so when the
-// child segment bends, the ball fills the gap that would otherwise show as a
-// pair of flat exposed disks at the elbow / knee.
+// Ellipsoid parented at the joint pivot below a segment, sized to the
+// segment's seam cross-section. The pivot lives STIFFNESS_GAP below the
+// parent's bottom face (that's where the spherical joint anchor is in the
+// parent's local frame). When the child segment bends, the ball stays at
+// the pivot (it's parented to the parent body, but at the anchor offset,
+// which the joint pins to a single world position) and both segments sweep
+// around it — reads as a knuckle, hides the 2·STIFFNESS_GAP physics gap
+// between visual surfaces.
 function addJointBall(
   parent: THREE.Object3D,
   material: THREE.MeshStandardMaterial,
@@ -207,10 +212,10 @@ function addJointBall(
   frontR: number,
   sideR: number,
 ) {
-  const r = Math.max(frontR, sideR, 1e-4);
+  const r = 0.75 * Math.max(frontR, sideR, 1e-4);
   const ball = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), material);
   ball.scale.set(frontR / r, 1, sideR / r);
-  ball.position.set(0, -segmentHalfH, 0);
+  ball.position.set(0, -segmentHalfH - STIFFNESS_GAP, 0);
   parent.add(ball);
 }
 

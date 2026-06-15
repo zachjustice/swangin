@@ -116,7 +116,7 @@ function refreshBanner() {
     ? ragdoll.motors.globalMultiplier.toFixed(2)
     : 'off';
   banner.textContent =
-    `${userLabel} — ${cubeCount} cubes · ${peerCount} peer(s) · LMB grapple · K/L slack=${slack} · ,/. motors=${motors} · M off`;
+    `${userLabel} — ${peerCount} peer(s) · K/L slack=${slack} · ,/. motors=${motors}`;
 }
 refreshBanner();
 
@@ -143,7 +143,7 @@ function applyMovementImpulse() {
   if (!keys.w && !keys.a && !keys.s && !keys.d) return;
   const yaw = tpCamera.yaw;
   const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
-  const rx =  Math.cos(yaw), rz = -Math.sin(yaw);
+  const rx = Math.cos(yaw), rz = -Math.sin(yaw);
   let dx = 0, dz = 0;
   if (keys.w) { dx += fx; dz += fz; }
   if (keys.s) { dx -= fx; dz -= fz; }
@@ -281,10 +281,14 @@ window.addEventListener('keydown', (e) => {
   } else if (e.code === 'KeyR') {
     grapple.release();
     ragdoll.respawn(SPAWN_POINT);
-  } else if (e.code === 'KeyW') { keys.w = true;
-  } else if (e.code === 'KeyA') { keys.a = true;
-  } else if (e.code === 'KeyS') { keys.s = true;
-  } else if (e.code === 'KeyD') { keys.d = true;
+  } else if (e.code === 'KeyW') {
+    keys.w = true;
+  } else if (e.code === 'KeyA') {
+    keys.a = true;
+  } else if (e.code === 'KeyS') {
+    keys.s = true;
+  } else if (e.code === 'KeyD') {
+    keys.d = true;
   }
 });
 

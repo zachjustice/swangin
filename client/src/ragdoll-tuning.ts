@@ -118,14 +118,14 @@ export const GRAPPLE_REACH_IMPULSE_STRENGTH = 0.08;
 // passive ragdoll for an A/B baseline. If a limb still explodes with
 // motors enabled, double the matching KD before raising KP.
 
-export const SHOULDER_KP = 0.4;
+export const SHOULDER_KP = 0.8;
 export const SHOULDER_KD = 0.08;
 
-export const ELBOW_KP = 0.3;
+export const ELBOW_KP = 0.6;
 export const ELBOW_KD = 0.06;
 
-export const HIP_KP = 0.6;
-export const HIP_KD = 0.12;
+export const HIP_KP = 1.2;
+export const HIP_KD = 0.24;
 
 export const KNEE_KP = 0.3;
 export const KNEE_KD = 0.06;

@@ -103,8 +103,8 @@ export const CONFIG = rawConfig as unknown as RagdollConfig;
 //   torso ↔ torso  ON   ← head↔torso contact stabilises the neck
 
 export const TORSO_GROUPS = (0x0002 << 16) | (0x0001 | 0x0002 | 0x0004 | 0x0008);
-export const ARM_GROUPS   = (0x0008 << 16) | (0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010);
-export const LEG_GROUPS   = (0x0010 << 16) | (0x0001 | 0x0004 | 0x0008 | 0x0010);
+export const ARM_GROUPS = (0x0008 << 16) | (0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010);
+export const LEG_GROUPS = (0x0010 << 16) | (0x0001 | 0x0004 | 0x0008 | 0x0010);
 
 export const REMOTE_RAGDOLL_MEMBERSHIP = 0x0004;
 export const REMOTE_RAGDOLL_FILTER = 0xfffb;
@@ -140,7 +140,7 @@ export const DENSITY = 50;
 // vertically stacked cuboids with matching X/Z extent that touch
 // face-to-face. 5 mm is enough margin for the contact solver and
 // imperceptible visually; 30 mm was leaving a visible joint gap.
-export const STIFFNESS_GAP = 0.005;
+export const STIFFNESS_GAP = 0.030;
 
 // --- 10 body parts in a stable order. Used for pose serialization and to
 // keep the local ragdoll's parts[] aligned with what gets sent on the wire.
@@ -185,32 +185,32 @@ export const HEAD_RADIUS = CONFIG.headRadius;
 // Arm: split at armJointY into upperArm + forearm (recentered halves).
 // Leg: split at legJointY into thigh + shin (recentered halves).
 function resolveCompound(side: Spline | undefined, front: Spline | undefined,
-                         sideStored: Profile | undefined, frontStored: Profile | undefined,
-                         jointY: number, name: string) {
+  sideStored: Profile | undefined, frontStored: Profile | undefined,
+  jointY: number, name: string) {
   if (!side || !front) throw new Error(`ragdoll-config.json: missing ${name} splines`);
   const full = profileFromConfig(sideStored, frontStored, side, front);
   return sliceProfileAtY(full, jointY);
 }
 
 const armSplit = resolveCompound(CONFIG.armSideSpline, CONFIG.armFrontSpline,
-                                 CONFIG.armSideProfile, CONFIG.armFrontProfile,
-                                 CONFIG.armJointY, 'arm');
+  CONFIG.armSideProfile, CONFIG.armFrontProfile,
+  CONFIG.armJointY, 'arm');
 const upperArm = armSplit.upper;
 const lowerArm = armSplit.lower;
 
 const legSplit = resolveCompound(CONFIG.legSideSpline, CONFIG.legFrontSpline,
-                                 CONFIG.legSideProfile, CONFIG.legFrontProfile,
-                                 CONFIG.legJointY, 'leg');
+  CONFIG.legSideProfile, CONFIG.legFrontProfile,
+  CONFIG.legJointY, 'leg');
 const thigh = legSplit.upper;
-const shin  = legSplit.lower;
+const shin = legSplit.lower;
 
-export const ARM_UPPER_SIDE_PROFILE  = upperArm.side;
+export const ARM_UPPER_SIDE_PROFILE = upperArm.side;
 export const ARM_UPPER_FRONT_PROFILE = upperArm.front;
-export const ARM_LOWER_SIDE_PROFILE  = lowerArm.side;
+export const ARM_LOWER_SIDE_PROFILE = lowerArm.side;
 export const ARM_LOWER_FRONT_PROFILE = lowerArm.front;
 export const THIGH_SIDE_PROFILE = thigh.side;
 export const THIGH_FRONT_PROFILE = thigh.front;
-export const SHIN_SIDE_PROFILE  = shin.side;
+export const SHIN_SIDE_PROFILE = shin.side;
 export const SHIN_FRONT_PROFILE = shin.front;
 
 // --- Per-limb derived half-lengths and radii (physics box fits the
@@ -218,12 +218,12 @@ export const SHIN_FRONT_PROFILE = shin.front;
 export const ARM_UPPER_HALF_LEN = profileHalfHeight(upperArm.side);
 export const ARM_LOWER_HALF_LEN = profileHalfHeight(lowerArm.side);
 export const THIGH_HALF_LEN = profileHalfHeight(thigh.side);
-export const SHIN_HALF_LEN  = profileHalfHeight(shin.side);
+export const SHIN_HALF_LEN = profileHalfHeight(shin.side);
 
 export const ARM_UPPER_RADIUS = profileMaxRadius(upperArm.front, upperArm.side);
 export const ARM_LOWER_RADIUS = profileMaxRadius(lowerArm.front, lowerArm.side);
 export const THIGH_RADIUS = profileMaxRadius(thigh.front, thigh.side);
-export const SHIN_RADIUS  = profileMaxRadius(shin.front,  shin.side);
+export const SHIN_RADIUS = profileMaxRadius(shin.front, shin.side);
 
 // Widest of the two — used for shoulder gap math and any place the prior
 // single-arm code referenced ARM_RADIUS.
@@ -232,17 +232,17 @@ export const ARM_RADIUS = Math.max(ARM_UPPER_RADIUS, ARM_LOWER_RADIUS);
 // Cross-section radii at the elbow/knee seams — used to drop an ellipsoid
 // at the joint so the bend reads smooth instead of exposing two flat caps.
 const elbowSeam = {
-  side:  upperArm.side[upperArm.side.length - 1][0],
+  side: upperArm.side[upperArm.side.length - 1][0],
   front: upperArm.front[upperArm.front.length - 1][0],
 };
-export const ELBOW_SIDE_RADIUS  = elbowSeam.side;
+export const ELBOW_SIDE_RADIUS = elbowSeam.side;
 export const ELBOW_FRONT_RADIUS = elbowSeam.front;
 
 const kneeSeam = {
-  side:  thigh.side[thigh.side.length - 1][0],
+  side: thigh.side[thigh.side.length - 1][0],
   front: thigh.front[thigh.front.length - 1][0],
 };
-export const KNEE_SIDE_RADIUS  = kneeSeam.side;
+export const KNEE_SIDE_RADIUS = kneeSeam.side;
 export const KNEE_FRONT_RADIUS = kneeSeam.front;
 
 // --- Joint anchor offsets (also used by physics in ragdoll.ts) ---
@@ -274,16 +274,16 @@ export type PartShape =
   | { kind: 'ball'; r: number };
 
 export const PART_SHAPES: Record<PosePart, PartShape> = {
-  torso:      { kind: 'cuboid', hx: TORSO_PHYS_HX,    hy: TORSO_HALF_HEIGHT, hz: TORSO_PHYS_HX },
-  head:       { kind: 'ball',   r:  HEAD_RADIUS },
-  armUpperL:  { kind: 'cuboid', hx: ARM_UPPER_RADIUS, hy: ARM_UPPER_HALF_LEN, hz: ARM_UPPER_RADIUS },
-  armLowerL:  { kind: 'cuboid', hx: ARM_LOWER_RADIUS, hy: ARM_LOWER_HALF_LEN, hz: ARM_LOWER_RADIUS },
-  armUpperR:  { kind: 'cuboid', hx: ARM_UPPER_RADIUS, hy: ARM_UPPER_HALF_LEN, hz: ARM_UPPER_RADIUS },
-  armLowerR:  { kind: 'cuboid', hx: ARM_LOWER_RADIUS, hy: ARM_LOWER_HALF_LEN, hz: ARM_LOWER_RADIUS },
-  legL_thigh: { kind: 'cuboid', hx: THIGH_RADIUS,     hy: THIGH_HALF_LEN,    hz: THIGH_RADIUS },
-  legL_shin:  { kind: 'cuboid', hx: SHIN_RADIUS,      hy: SHIN_HALF_LEN,     hz: SHIN_RADIUS },
-  legR_thigh: { kind: 'cuboid', hx: THIGH_RADIUS,     hy: THIGH_HALF_LEN,    hz: THIGH_RADIUS },
-  legR_shin:  { kind: 'cuboid', hx: SHIN_RADIUS,      hy: SHIN_HALF_LEN,     hz: SHIN_RADIUS },
+  torso: { kind: 'cuboid', hx: TORSO_PHYS_HX, hy: TORSO_HALF_HEIGHT, hz: TORSO_PHYS_HX },
+  head: { kind: 'ball', r: HEAD_RADIUS },
+  armUpperL: { kind: 'cuboid', hx: ARM_UPPER_RADIUS, hy: ARM_UPPER_HALF_LEN, hz: ARM_UPPER_RADIUS },
+  armLowerL: { kind: 'cuboid', hx: ARM_LOWER_RADIUS, hy: ARM_LOWER_HALF_LEN, hz: ARM_LOWER_RADIUS },
+  armUpperR: { kind: 'cuboid', hx: ARM_UPPER_RADIUS, hy: ARM_UPPER_HALF_LEN, hz: ARM_UPPER_RADIUS },
+  armLowerR: { kind: 'cuboid', hx: ARM_LOWER_RADIUS, hy: ARM_LOWER_HALF_LEN, hz: ARM_LOWER_RADIUS },
+  legL_thigh: { kind: 'cuboid', hx: THIGH_RADIUS, hy: THIGH_HALF_LEN, hz: THIGH_RADIUS },
+  legL_shin: { kind: 'cuboid', hx: SHIN_RADIUS, hy: SHIN_HALF_LEN, hz: SHIN_RADIUS },
+  legR_thigh: { kind: 'cuboid', hx: THIGH_RADIUS, hy: THIGH_HALF_LEN, hz: THIGH_RADIUS },
+  legR_shin: { kind: 'cuboid', hx: SHIN_RADIUS, hy: SHIN_HALF_LEN, hz: SHIN_RADIUS },
 };
 
 // Local-space mesh offsets for ornaments parented under a part (eyes, hand
