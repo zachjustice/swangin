@@ -30,9 +30,13 @@ export class RagdollMotors {
   enabled = true;
   // Scales the torso righting torque, the grapple reach impulse, and every
   // per-joint PD.
-  globalMultiplier = 1.0;
+  globalMultiplier = 0.7;
   // Set by the host each substep: where the grapple is anchored, or null.
   grappleAnchor: THREE.Vector3 | null = null;
+
+  // Runtime toggles for torso righting and grapple reach (used by simulator UI).
+  rightingEnabled = TORSO_RIGHTING_ENABLED;
+  grappleReachEnabled = GRAPPLE_REACH_IMPULSE_ENABLED;
 
   private readonly joints: JointPD[] = [];
 
@@ -52,7 +56,7 @@ export class RagdollMotors {
     // Shoulder offset in torso-local space — used to compute the reach
     // direction (anchor − shoulderWorld).
     public shoulderLocalOffset: THREE.Vector3,
-  ) {}
+  ) { }
 
   // Register a parent→child PD. Capture the rest-relative rotation NOW
   // (call after the skeleton is constructed at its spawn pose) — that
@@ -77,7 +81,7 @@ export class RagdollMotors {
     if (!this.enabled) return;
     const g = this.globalMultiplier;
 
-    if (TORSO_RIGHTING_ENABLED) {
+    if (this.rightingEnabled) {
       this.applyTorsoRighting(g, dt);
     }
 
@@ -85,7 +89,7 @@ export class RagdollMotors {
       this.applyJointPDs(g, dt);
     }
 
-    if (GRAPPLE_REACH_IMPULSE_ENABLED && this.grappleAnchor) {
+    if (this.grappleReachEnabled && this.grappleAnchor) {
       this.applyGrappleReachImpulse(g);
     }
   }

@@ -9,8 +9,9 @@
         margin: 0; padding: 0; height: 100%; overflow: hidden;
         background: #0a1438; color: #e6ecff;
         font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        display: flex; flex-direction: column;
       }
-      #app { display: flex; height: 100vh; }
+      #app { display: flex; flex: 1; min-height: 0; }
       #viewport { flex: 1; position: relative; min-width: 0; }
       #viewport canvas { display: block; }
       #panel {
@@ -69,9 +70,42 @@
         font-size: 10px; color: #6e7ea8;
         padding: 4px 0; line-height: 1.4;
       }
+      #tabs {
+        display: flex;
+        gap: 0;
+        background: #0a1438;
+        border-bottom: 1px solid #2a3458;
+        padding: 0;
+      }
+      .tab {
+        flex: 1;
+        padding: 10px 12px;
+        background: #131c45;
+        color: #9fb0e6;
+        border: none;
+        border-bottom: 3px solid transparent;
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        transition: all 0.2s;
+      }
+      .tab:hover {
+        background: #1a2454;
+      }
+      .tab.active {
+        background: #0a1438;
+        color: #6a8aff;
+        border-bottom-color: #6a8aff;
+      }
     </style>
   </head>
   <body>
+    <div id="tabs">
+      <button id="tab-prototype" class="tab active">Prototype</button>
+      <button id="tab-simulator" class="tab">Simulator</button>
+    </div>
     <div id="app">
       <div id="viewport"></div>
       <div id="panel"></div>

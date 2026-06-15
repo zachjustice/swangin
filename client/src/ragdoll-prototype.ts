@@ -826,7 +826,7 @@ controls.target.set(0, 0, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.12;
 controls.minDistance = 0.4;
-controls.maxDistance = 6;
+controls.maxDistance = 15;
 
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.9));
 const dir = new THREE.DirectionalLight(0xfff4e0, 1.5);
@@ -853,9 +853,418 @@ window.addEventListener('resize', () => {
   renderer.setSize(w, h);
 });
 
-function animate() {
-  requestAnimationFrame(animate);
+let prototypeAnimId: number;
+function animatePrototype() {
+  prototypeAnimId = requestAnimationFrame(animatePrototype);
   controls.update();
   renderer.render(scene, camera);
 }
-animate();
+
+// ---------- Simulator tab ----------
+
+// All simulator meshes (ragdoll parts, cube, grapple line) live in this group.
+// Toggling .visible is the entire scene-swap mechanism.
+const simulatorRoot = new THREE.Group();
+simulatorRoot.visible = false;
+scene.add(simulatorRoot);
+
+interface SimState {
+  world: any;
+  ragdoll: any;
+  grapple: any;
+  anchorPos: THREE.Vector3;
+  accumulator: number;
+  meshToBodies: Map<THREE.Object3D, any>;
+  raycaster: THREE.Raycaster;
+  draggedBody: any | null;
+  dragPlane: THREE.Plane;
+  dragStartPos: THREE.Vector3;
+}
+
+let simulatorActive = false;
+let simulatorInitialized = false;
+let simulatorAnimId: number;
+let simLastTime = 0;
+let simulatorState: SimState | null = null;
+
+function checkboxRow(
+  parent: HTMLElement,
+  label: string,
+  initial: boolean,
+  onChange: (v: boolean) => void,
+) {
+  const r = document.createElement('div');
+  r.className = 'row';
+  const l = document.createElement('label');
+  l.textContent = label;
+  l.title = label;
+  r.append(l);
+  const c = document.createElement('input');
+  c.type = 'checkbox';
+  c.checked = initial;
+  c.style.cssText = 'width:56px;cursor:pointer;accent-color:#6a8aff';
+  c.onchange = () => onChange(c.checked);
+  r.append(c);
+  parent.append(r);
+}
+
+async function initSimulator() {
+  const RAPIER = (await import('@dimforge/rapier3d-compat')).default;
+  await RAPIER.init();
+
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  world.timestep = 1 / 60;
+
+  // Cube suspended above — grapple anchors to its bottom face.
+  const cubeHalf = 0.5;
+  const cubeY = 2.2;
+  const cubePhysBody = world.createRigidBody(
+    RAPIER.RigidBodyDesc.fixed().setTranslation(0, cubeY, 0),
+  );
+  world.createCollider(
+    RAPIER.ColliderDesc.cuboid(cubeHalf, cubeHalf, cubeHalf)
+      .setFriction(config.physics.colliderFriction),
+    cubePhysBody,
+  );
+  const cubeMesh = new THREE.Mesh(
+    new THREE.BoxGeometry(cubeHalf * 2, cubeHalf * 2, cubeHalf * 2),
+    new THREE.MeshStandardMaterial({ color: 0x4a6fa5, roughness: 0.8 }),
+  );
+  cubeMesh.position.set(0, cubeY, 0);
+  simulatorRoot.add(cubeMesh);
+
+  // Grapple fires to the bottom face of the cube; ragdoll hangs below.
+  const anchorPos = new THREE.Vector3(0, cubeY - cubeHalf, 0);
+
+  const { createRagdoll } = await import('./ragdoll.ts');
+  const { Grapple } = await import('./grapple.ts');
+
+  // Spawn torso below the anchor; gravity + grapple settle it into a hang.
+  const spawnPos = new THREE.Vector3(0, 0.3, 0);
+  const ragdoll = createRagdoll(
+    simulatorRoot as unknown as THREE.Scene,
+    world,
+    spawnPos,
+  );
+
+  const grapple = new Grapple(
+    simulatorRoot as unknown as THREE.Scene,
+    world,
+    ragdoll.grappleHand,
+    ragdoll.handLocalOffset,
+  );
+  grapple.fire(anchorPos);
+  ragdoll.motors.grappleAnchor = anchorPos.clone();
+  ragdoll.motors.enabled = true;
+
+  // Map every mesh → its Rapier body for drag raycasting.
+  const meshToBodies = new Map<THREE.Object3D, any>();
+  ragdoll.parts.forEach((part: any) => {
+    const walk = (obj: THREE.Object3D) => {
+      if ((obj as THREE.Mesh).isMesh) meshToBodies.set(obj, part.body);
+      obj.children.forEach(walk);
+    };
+    walk(part.mesh);
+  });
+
+  simulatorState = {
+    world,
+    ragdoll,
+    grapple,
+    anchorPos,
+    accumulator: 0,
+    meshToBodies,
+    raycaster: new THREE.Raycaster(),
+    draggedBody: null,
+    dragPlane: new THREE.Plane(),
+    dragStartPos: new THREE.Vector3(),
+  };
+}
+
+function respawnSimulator() {
+  if (!simulatorState) return;
+  const { ragdoll, grapple, anchorPos } = simulatorState;
+  ragdoll.respawn(new THREE.Vector3(0, 0.3, 0));
+  grapple.release();
+  grapple.fire(anchorPos);
+  ragdoll.motors.grappleAnchor = anchorPos.clone();
+}
+
+function buildSimulatorPanel() {
+  panel.innerHTML = '';
+  if (!simulatorState) return;
+
+  const p = config.physics;
+  const { ragdoll } = simulatorState;
+  const motors = ragdoll.motors;
+  // Joint order matches addJointPD calls in ragdoll.ts:
+  // 0:neck  1:shoulderL  2:shoulderR  3:elbowL  4:elbowR
+  // 5:hipL  6:hipR  7:kneeL  8:kneeR
+  const motorJoints = (motors as any).joints as Array<{ kp: number; kd: number }>;
+
+  let sec = section('Body Damping');
+  slider(sec, 'Linear', 0, 0.5, 0.01, p.bodyLinearDamping, (v) => {
+    p.bodyLinearDamping = v;
+    simulatorState!.ragdoll.parts.forEach((pt: any) => pt.body.setLinearDamping(v));
+  });
+  slider(sec, 'Angular torso', 0, 1.5, 0.01, p.bodyAngularDampingTorso, (v) => {
+    p.bodyAngularDampingTorso = v;
+    simulatorState!.ragdoll.torso.setAngularDamping(v);
+  });
+  slider(sec, 'Angular limb', 0, 1.5, 0.01, p.bodyAngularDampingLimb, (v) => {
+    p.bodyAngularDampingLimb = v;
+    const torso = simulatorState!.ragdoll.torso;
+    simulatorState!.ragdoll.parts.forEach((pt: any) => {
+      if (pt.body !== torso) pt.body.setAngularDamping(v);
+    });
+  });
+
+  sec = section('Collider');
+  slider(sec, 'Friction (on reset)', 0, 1, 0.01, p.colliderFriction, (v) => {
+    p.colliderFriction = v;
+  });
+
+  sec = section('Torso Righting');
+  const trHint = document.createElement('div');
+  trHint.className = 'hint';
+  trHint.textContent = 'KP/KD changes take effect on page reload.';
+  sec.append(trHint);
+  checkboxRow(sec, 'Enabled', motors.rightingEnabled, (v) => {
+    p.torsoRightingEnabled = v;
+    motors.rightingEnabled = v;
+  });
+  slider(sec, 'KP', 0, 10, 0.1, p.torsoRightingKp, (v) => { p.torsoRightingKp = v; });
+  slider(sec, 'KD', 0, 1, 0.01, p.torsoRightingKd, (v) => { p.torsoRightingKd = v; });
+
+  sec = section('Grapple Reach');
+  const grHint = document.createElement('div');
+  grHint.className = 'hint';
+  grHint.textContent = 'Strength changes take effect on page reload.';
+  sec.append(grHint);
+  checkboxRow(sec, 'Enabled', motors.grappleReachEnabled, (v) => {
+    p.grappleReachImpulseEnabled = v;
+    motors.grappleReachEnabled = v;
+  });
+  slider(sec, 'Strength', 0, 0.5, 0.01, p.grappleReachImpulseStrength, (v) => { p.grappleReachImpulseStrength = v; });
+
+  // Joint KP/KD — indices into motors.joints[] (addJointPD order from ragdoll.ts).
+  sec = section('Joint PD');
+  const jointDefs: Array<{ name: string; kp: string; kd: string; indices: number[] }> = [
+    { name: 'Shoulder', kp: 'shoulderKp', kd: 'shoulderKd', indices: [1, 2] },
+    { name: 'Elbow',    kp: 'elbowKp',   kd: 'elbowKd',   indices: [3, 4] },
+    { name: 'Hip',      kp: 'hipKp',     kd: 'hipKd',     indices: [5, 6] },
+    { name: 'Knee',     kp: 'kneeKp',    kd: 'kneeKd',    indices: [7, 8] },
+    { name: 'Neck',     kp: 'neckKp',    kd: 'neckKd',    indices: [0]    },
+  ];
+  for (const j of jointDefs) {
+    const sub = document.createElement('div');
+    sub.style.marginBottom = '10px';
+    sec.append(sub);
+    const lbl = document.createElement('div');
+    lbl.style.cssText = 'font-size:10px;font-weight:bold;color:#9fb0e6;margin-bottom:3px';
+    lbl.textContent = j.name;
+    sub.append(lbl);
+    slider(sub, 'KP', 0, 2, 0.05, (p as any)[j.kp], (v) => {
+      (p as any)[j.kp] = v;
+      for (const idx of j.indices) if (motorJoints[idx]) motorJoints[idx].kp = v;
+    });
+    slider(sub, 'KD', 0, 0.5, 0.01, (p as any)[j.kd], (v) => {
+      (p as any)[j.kd] = v;
+      for (const idx of j.indices) if (motorJoints[idx]) motorJoints[idx].kd = v;
+    });
+  }
+
+  sec = section('Actions');
+  const hint = document.createElement('div');
+  hint.className = 'hint';
+  hint.textContent = 'Click and drag any limb to apply force. Copy Physics JSON to update ragdoll-config.json.';
+  sec.append(hint);
+  const actions = document.createElement('div');
+  actions.className = 'actions';
+
+  const resetBtn = document.createElement('button');
+  resetBtn.textContent = 'Reset';
+  resetBtn.onclick = () => respawnSimulator();
+
+  const motorsBtn = document.createElement('button');
+  motorsBtn.textContent = motors.enabled ? 'Motors: ON' : 'Motors: OFF';
+  motorsBtn.onclick = () => {
+    motors.enabled = !motors.enabled;
+    motorsBtn.textContent = motors.enabled ? 'Motors: ON' : 'Motors: OFF';
+  };
+
+  const copyBtn = document.createElement('button');
+  copyBtn.textContent = 'Copy Physics JSON';
+  copyBtn.onclick = async () => {
+    const text = JSON.stringify(p, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = 'Copied!';
+      setTimeout(() => { copyBtn.textContent = 'Copy Physics JSON'; }, 1200);
+    } catch {
+      console.log(text);
+      copyBtn.textContent = 'Logged';
+      setTimeout(() => { copyBtn.textContent = 'Copy Physics JSON'; }, 1800);
+    }
+  };
+
+  actions.append(resetBtn, motorsBtn, copyBtn);
+  sec.append(actions);
+}
+
+function setupSimulatorDrag() {
+  const onDown = (e: PointerEvent) => {
+    if (!simulatorState) return;
+    const { raycaster, meshToBodies, dragPlane, dragStartPos } = simulatorState;
+    const rect = renderer.domElement.getBoundingClientRect();
+    raycaster.setFromCamera(
+      new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      ),
+      camera,
+    );
+    let hitBody: any = null;
+    const hitPoint = new THREE.Vector3();
+    for (const [mesh, body] of meshToBodies) {
+      const hits = raycaster.intersectObject(mesh);
+      if (hits.length > 0) { hitBody = body; hitPoint.copy(hits[0].point); break; }
+    }
+    if (hitBody) {
+      simulatorState.draggedBody = hitBody;
+      dragStartPos.copy(hitPoint);
+      dragPlane.setFromNormalAndCoplanarPoint(
+        camera.getWorldDirection(new THREE.Vector3()),
+        hitPoint,
+      );
+      controls.enabled = false;
+    }
+  };
+
+  const onMove = (e: PointerEvent) => {
+    if (!simulatorState?.draggedBody) return;
+    const { raycaster, draggedBody, dragPlane, dragStartPos } = simulatorState;
+    const rect = renderer.domElement.getBoundingClientRect();
+    raycaster.setFromCamera(
+      new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      ),
+      camera,
+    );
+    const hit = new THREE.Vector3();
+    if (!raycaster.ray.intersectPlane(dragPlane, hit)) return;
+    const delta = hit.clone().sub(dragStartPos);
+    const m = draggedBody.mass() * 8;
+    draggedBody.applyImpulse({ x: delta.x * m, y: delta.y * m, z: delta.z * m }, true);
+    dragStartPos.copy(hit);
+  };
+
+  const onUp = () => {
+    if (simulatorState) simulatorState.draggedBody = null;
+    controls.enabled = true;
+  };
+
+  renderer.domElement.addEventListener('pointerdown', onDown);
+  renderer.domElement.addEventListener('pointermove', onMove);
+  renderer.domElement.addEventListener('pointerup', onUp);
+  renderer.domElement.addEventListener('pointerleave', onUp);
+
+  return () => {
+    renderer.domElement.removeEventListener('pointerdown', onDown);
+    renderer.domElement.removeEventListener('pointermove', onMove);
+    renderer.domElement.removeEventListener('pointerup', onUp);
+    renderer.domElement.removeEventListener('pointerleave', onUp);
+  };
+}
+
+let cleanupDrag: (() => void) | null = null;
+
+function animateSimulator(now: number) {
+  simulatorAnimId = requestAnimationFrame(animateSimulator);
+  if (!simulatorState) return;
+
+  const rawDt = simLastTime > 0 ? (now - simLastTime) / 1000 : 1 / 60;
+  simLastTime = now;
+  const dt = Math.min(rawDt, 1 / 20);
+
+  const { world, ragdoll, grapple } = simulatorState;
+  simulatorState.accumulator += dt;
+  let steps = 0;
+  while (simulatorState.accumulator >= 1 / 60 && steps < 5) {
+    ragdoll.motors.update(1 / 60);
+    world.step();
+    simulatorState.accumulator -= 1 / 60;
+    steps++;
+  }
+
+  ragdoll.sync();
+  grapple.update();
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+function switchToSimulator() {
+  if (simulatorActive) return;
+  simulatorActive = true;
+
+  cancelAnimationFrame(prototypeAnimId);
+  scene.remove(current.root);   // hide static prototype ragdoll
+  simulatorRoot.visible = true;
+
+  // Frame the hanging ragdoll from a useful angle with room to zoom.
+  camera.position.set(3.5, 1.2, 3.5);
+  controls.target.set(0, 0.6, 0);
+  controls.update();
+
+  panel.innerHTML = '';
+
+  if (!simulatorInitialized) {
+    initSimulator().then(() => {
+      simulatorInitialized = true;
+      if (!simulatorActive) return; // user switched away during async init
+      cleanupDrag = setupSimulatorDrag();
+      buildSimulatorPanel();
+      simLastTime = 0;
+      simulatorAnimId = requestAnimationFrame(animateSimulator);
+    });
+  } else {
+    respawnSimulator();
+    cleanupDrag = setupSimulatorDrag();
+    buildSimulatorPanel();
+    simLastTime = 0;
+    simulatorAnimId = requestAnimationFrame(animateSimulator);
+  }
+}
+
+function switchToPrototype() {
+  if (!simulatorActive) return;
+  simulatorActive = false;
+
+  cancelAnimationFrame(simulatorAnimId);
+  cleanupDrag?.();
+  cleanupDrag = null;
+
+  simulatorRoot.visible = false;
+  scene.add(current.root);   // restore static prototype ragdoll
+
+  buildUI(config, rebuild);
+  animatePrototype();
+}
+
+const tabPrototype = document.getElementById('tab-prototype')!;
+const tabSimulator = document.getElementById('tab-simulator')!;
+
+tabPrototype.addEventListener('click', () => {
+  tabPrototype.classList.add('active');
+  tabSimulator.classList.remove('active');
+  switchToPrototype();
+});
+
+tabSimulator.addEventListener('click', () => {
+  tabPrototype.classList.remove('active');
+  tabSimulator.classList.add('active');
+  switchToSimulator();
+});
+
+animatePrototype();

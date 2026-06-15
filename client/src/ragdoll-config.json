@@ -1383,5 +1383,26 @@
       -0.17407407407407405
     ]
   ],
-  "footTopY": -0.065
+  "footTopY": -0.065,
+  "physics": {
+    "bodyLinearDamping": 0.05,
+    "bodyAngularDampingTorso": 0.05,
+    "bodyAngularDampingLimb": 0.4,
+    "colliderFriction": 0.5,
+    "torsoRightingEnabled": false,
+    "torsoRightingKp": 2,
+    "torsoRightingKd": 0.2,
+    "grappleReachImpulseEnabled": true,
+    "grappleReachImpulseStrength": 0.08,
+    "shoulderKp": 0.8,
+    "shoulderKd": 0.08,
+    "elbowKp": 0.6,
+    "elbowKd": 0.06,
+    "hipKp": 1.2,
+    "hipKd": 0.24,
+    "kneeKp": 0.3,
+    "kneeKd": 0.06,
+    "neckKp": 0.15,
+    "neckKd": 0.03
+  }
 }

@@ -72,6 +72,28 @@ export interface RagdollConfig {
   footTopY: number;
   color: string;
   roughness: number; metalness: number;
+
+  physics: {
+    bodyLinearDamping: number;
+    bodyAngularDampingTorso: number;
+    bodyAngularDampingLimb: number;
+    colliderFriction: number;
+    torsoRightingEnabled: boolean;
+    torsoRightingKp: number;
+    torsoRightingKd: number;
+    grappleReachImpulseEnabled: boolean;
+    grappleReachImpulseStrength: number;
+    shoulderKp: number;
+    shoulderKd: number;
+    elbowKp: number;
+    elbowKd: number;
+    hipKp: number;
+    hipKd: number;
+    kneeKp: number;
+    kneeKd: number;
+    neckKp: number;
+    neckKd: number;
+  };
 }
 
 export const CONFIG = rawConfig as unknown as RagdollConfig;
