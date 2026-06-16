@@ -15,8 +15,13 @@ import { encodePose } from './pose-codec.ts';
 import { createOrb } from './orb.ts';
 import { createCloudLayer } from './sky-clouds.ts';
 import { MOVE_IMPULSE, MOVE_MAX_SPEED } from './constants.ts';
+import * as collision from './collision.ts';
+import { Confetti } from './confetti.ts';
+import { PlayerLifecycle } from './lifecycle.ts';
+import { DevDummy } from './dev-dummy.ts';
+import { LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
 
-const SKY = 0x3a5a8a;
+const SKY = 0x6b9bcc;
 const FIXED_DT = 1 / 60;
 const MAX_SUBSTEPS = 5;
 
@@ -42,8 +47,8 @@ camera.lookAt(0, 0, 0);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMapping = THREE.NeutralToneMapping;
+renderer.toneMappingExposure = 0.85;
 document.body.appendChild(renderer.domElement);
 
 const cloudLayer = createCloudLayer(scene);
@@ -58,8 +63,8 @@ labelRenderer.domElement.style.left = '0';
 labelRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(labelRenderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 1.4));
-const dir = new THREE.DirectionalLight(0xfff4e0, 1.5);
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.5));
+const dir = new THREE.DirectionalLight(0xfff4e0, 0.6);
 dir.position.set(20, 40, 10);
 scene.add(dir);
 
@@ -91,6 +96,9 @@ await RAPIER.init();
 
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
 world.timestep = FIXED_DT;
+// Event queue for cross-player collision events. drained each substep by
+// collision.drain after world.step(eventQueue).
+const eventQueue = new RAPIER.EventQueue(true);
 
 const { count: cubeCount } = buildLattice(scene, world);
 addSpawnMarker(scene);
@@ -103,6 +111,38 @@ const ragdoll = createRagdoll(scene, world, SPAWN_POINT);
 const tpCamera = new ThirdPersonCamera(camera, renderer.domElement, ragdoll.torso);
 const reticle = new CubeReticle(scene, world);
 const grapple = new Grapple(scene, world, ragdoll.grappleHand, ragdoll.handLocalOffset);
+
+const confetti = new Confetti(scene);
+
+// Dev-only static dummy hanging from the bottom face of the top-center cube
+// (world y = LATTICE_TOP_Y, which is the cube CENTER, so attach at top - halfExtent).
+// Hang length is tuned so the dummy's feet stay clear of the next-layer cube
+// tops; adjust if proportions change.
+let devDummy: DevDummy | null = null;
+if (import.meta.env.DEV) {
+  const halfExtent = CUBE_SIZE / 2;
+  const attach = new THREE.Vector3(0, LATTICE_TOP_Y - halfExtent, 0);
+  devDummy = new DevDummy(scene, world, attach, 2.6, 0xff3366, 'Dummy');
+  console.log('[dev] dummy hung at', attach.toArray());
+}
+
+// Multiplayer state — assigned after auth resolves below; tick() guards on null.
+let multiplayer: Multiplayer | null = null;
+
+// Lifecycle is constructed up front but depends on multiplayer at the moment
+// of sendDied. The closure reads `multiplayer` at call time so we don't need
+// to construct lifecycle behind the auth promise.
+const lifecycle = new PlayerLifecycle({
+  ragdoll,
+  grapple,
+  multiplayer: {
+    sendDied: (killer: string, x: number, y: number, z: number) => {
+      multiplayer?.sendDied(killer, x, y, z);
+    },
+  },
+  confetti,
+  spawnPoint: SPAWN_POINT,
+});
 
 let userLabel = '…';
 const keys = { w: false, a: false, s: false, d: false };
@@ -117,11 +157,11 @@ function checkRespawn() {
     Math.abs(t.x) > WORLD_HALF ||
     Math.abs(t.z) > WORLD_HALF;
   if (!oob) return;
-  grapple.release();
-  ragdoll.respawn(SPAWN_POINT);
+  lifecycle.forceRespawn();
 }
 
 function applyMovementImpulse() {
+  if (!lifecycle.canControl()) return;
   if (!keys.w && !keys.a && !keys.s && !keys.d) return;
   const yaw = tpCamera.yaw;
   const fx = -Math.sin(yaw), fz = -Math.cos(yaw);
@@ -139,8 +179,25 @@ function applyMovementImpulse() {
   ragdoll.torso.applyImpulse({ x: dx * MOVE_IMPULSE, y: 0, z: dz * MOVE_IMPULSE }, true);
 }
 
-// Multiplayer state — assigned after auth resolves below; tick() guards on null.
-let multiplayer: Multiplayer | null = null;
+// Collision context: rebuilt each drain call so multiplayer / lifecycle stay
+// fresh. cheap — just object literal allocation. The dev dummy is merged
+// into getPeer's lookup so the collision rule sees it the same way it sees
+// a real Colyseus peer.
+function collisionCtx(): collision.CollisionContext {
+  return {
+    localRagdoll: ragdoll,
+    lifecycle,
+    getPeer: (sid) => {
+      const real = multiplayer?.getPeer(sid);
+      if (real) return real;
+      if (devDummy && devDummy.sessionId === sid) return devDummy;
+      return undefined;
+    },
+    onLocalFasterHit: devDummy
+      ? (sid) => { if (devDummy && sid === devDummy.sessionId) devDummy.onHit(confetti); }
+      : undefined,
+  };
+}
 
 function tick() {
   const now = performance.now() / 1000;
@@ -154,7 +211,9 @@ function tick() {
     ragdoll.motors.grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
     ragdoll.motors.update(FIXED_DT);
     applyMovementImpulse();
-    world.step();
+    world.step(eventQueue);
+    collision.drain(eventQueue, collisionCtx());
+    ragdoll.updateSpeed(FIXED_DT);
     accumulator -= FIXED_DT;
     steps++;
   }
@@ -162,13 +221,16 @@ function tick() {
 
   cloudLayer.update(now);
 
+  lifecycle.tick(performance.now());
   checkRespawn();
   ragdoll.sync();
   grapple.update();
   tpCamera.update(frameTime);
   reticle.update(camera);
   multiplayer?.update();
+  devDummy?.update(performance.now());
   orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);
+  confetti.update(frameTime);
 
   composer.render();
   labelRenderer.render(scene, camera);
@@ -205,6 +267,8 @@ multiplayer = new Multiplayer({
   userId,
   name: userName,
   color: myColor,
+  confetti,
+  localRagdoll: ragdoll,
 });
 
 multiplayer.connect().then(() => {
@@ -212,7 +276,13 @@ multiplayer.connect().then(() => {
   setInterval(() => {
     if (!multiplayer) return;
     const grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
-    multiplayer.sendPose(encodePose(ragdoll.poseBodies, grapple.isActive, grappleAnchor));
+    multiplayer.sendPose(encodePose(
+      ragdoll.poseBodies,
+      ragdoll.smoothedSpeed,
+      ragdoll.linvel(),
+      grapple.isActive,
+      grappleAnchor,
+    ));
   }, Math.round(1000 / POSE_SEND_HZ));
 }).catch((err) => {
   console.error('[mp] failed to join room', err);
@@ -227,6 +297,7 @@ renderer.domElement.addEventListener('click', () => {
 
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || !tpCamera.isLocked) return;
+  if (!lifecycle.canControl()) return;
   if (reticle.hitPoint) grapple.fire(reticle.hitPoint);
 });
 
@@ -236,8 +307,7 @@ window.addEventListener('mouseup', (e) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') {
-    grapple.release();
-    ragdoll.respawn(SPAWN_POINT);
+    lifecycle.forceRespawn();
   } else if (e.code === 'KeyW') {
     keys.w = true;
   } else if (e.code === 'KeyA') {

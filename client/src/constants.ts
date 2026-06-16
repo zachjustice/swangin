@@ -11,3 +11,34 @@ export const GRAPPLE_COLOR = new THREE.Color(GRAPPLE_COLOR_HEX).multiplyScalar(G
 
 export const MOVE_IMPULSE = 0.8;   // impulse per physics substep (N·s)
 export const MOVE_MAX_SPEED = 8.0; // horizontal speed cap (m/s)
+
+// --- Player–player collision ---
+// On contact between a local-ragdoll part and a remote-ragdoll part, the
+// victim-side rule is: I die only if max(self, peer) >= THRESHOLD AND
+// peer - self > TIE_EPSILON. Symmetric / unclear cases resolve to "nobody
+// dies" by design — see /Users/zach/.claude/plans/create-an-implementation-plan-dazzling-key.md
+// for the rationale (network staleness on peer speed makes a strict
+// slower-dies rule produce both-die or nobody-die on symmetric crashes).
+export const COLLISION_SPEED_THRESHOLD = 10.0; // m/s, torso |linvel|
+export const COLLISION_TIE_EPSILON     = 0.5;  // m/s
+// EMA on torso |linvel| each physics substep. α = 0.2 over 60 Hz substeps
+// gives a ~80 ms effective window — enough to swallow joint-impulse jitter,
+// short enough that a real grapple release reads as fast within a few frames.
+export const COLLISION_SPEED_EMA_ALPHA = 0.2;
+export const TUMBLE_DURATION_S         = 3.0;
+export const SPAWN_PROTECT_DURATION_S  = 1.5;
+// Impulse magnitude = killerSpeed × KNOCKBACK_GAIN × torsoMass.
+export const KNOCKBACK_GAIN            = 1.4;
+// Local debounce: ignore re-fires from the same peer within this window.
+export const LOCAL_PEER_COOLDOWN_MS    = 500;
+// Mirror of the server's dedup window in server/src/room.ts (SERVER_DEDUP_MS).
+// Kept in sync by hand — single literal isn't worth a shared package for v0.
+export const SERVER_DEDUP_MS_REF       = 750;
+
+// Confetti burst — InstancedMesh, JS-integrated, despawn after lifetime.
+export const CONFETTI_COUNT          = 120;
+export const CONFETTI_LIFETIME_S     = 1.8;
+export const CONFETTI_GRAVITY        = -15.0; // m/s²
+export const CONFETTI_DRAG           = 1.6;   // exponential damping factor / s
+export const CONFETTI_INIT_SPEED_MIN = 4.0;   // m/s outward
+export const CONFETTI_INIT_SPEED_MAX = 10.0;

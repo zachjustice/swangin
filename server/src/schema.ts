@@ -7,6 +7,10 @@ export class Player extends Schema {
   @type('string') userId = '';
   @type('string') name = '';
   @type('uint32') color = 0xffffff;
+  // Kill counter. Incremented by the server when this player is named as a
+  // killer in a `died` message; reset to 0 when this player is the victim.
+  // uint16 ceiling is 65535 — clamped server-side.
+  @type('uint16') kills = 0;
 }
 
 export class SwanginState extends Schema {

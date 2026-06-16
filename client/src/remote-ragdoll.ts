@@ -15,6 +15,8 @@ import {
 } from './ragdoll-proportions.ts';
 import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 import { POSE_FLOATS } from './pose-codec.ts';
+import { registerCollider, unregisterCollider } from './collision.ts';
+import { createKillCounter, type KillCounter } from './kill-counter.ts';
 
 // Remote ragdoll: 10 kinematic-position bodies (no joints, no motors). Pose is
 // dictated by interpolated network samples each frame. Kinematic so C11 can
@@ -32,20 +34,33 @@ export interface RemoteRagdoll {
   grappleLine: Line2;
   label: CSS2DObject;
   mesh: THREE.SkinnedMesh;
-  // pose: 70 floats. grap: [active, ax, ay, az].
-  applyPose(pose: number[] | Float32Array, grap: number[] | Float32Array): void;
+  // Most-recent speed + vel from the pose stream. Null until first envelope
+  // arrives; collision.drain skips the death check until both are populated.
+  lastSpeed: number | null;
+  lastVel: { x: number; y: number; z: number } | null;
+  // pose: 70 floats. speed: scalar. vel: 3 floats. grap: [active, ax, ay, az].
+  applyPose(
+    pose: number[] | Float32Array,
+    speed: number,
+    vel: number[] | Float32Array,
+    grap: number[] | Float32Array,
+  ): void;
+  setVisible(v: boolean): void;
+  setKillCount(n: number): void;
   dispose(): void;
 }
 
 export function createRemoteRagdoll(
   scene: THREE.Scene,
   world: RAPIER.World,
+  sessionId: string,
   color: number,
   name: string,
   spawnHint: THREE.Vector3,
 ): RemoteRagdoll {
   const mat = new THREE.MeshStandardMaterial({ color, ...MATERIAL });
   const parts: RemotePart[] = [];
+  const colliderHandles: number[] = [];
 
   function kinematicBody(at: THREE.Vector3): RAPIER.RigidBody {
     return world.createRigidBody(
@@ -60,10 +75,17 @@ export function createRemoteRagdoll(
     const colliderDesc = shape.kind === 'ball'
       ? RAPIER.ColliderDesc.ball(shape.r)
       : RAPIER.ColliderDesc.cuboid(shape.hx, shape.hy, shape.hz);
-    world.createCollider(
+    // Active events on the REMOTE side only — the cross-player pair lights
+    // up the event queue as long as at least one collider in the pair has
+    // them on. Remote set is smaller and never self-collides, so this is
+    // cheaper than blanketing the dynamic local ragdoll.
+    colliderDesc.setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS);
+    const collider = world.createCollider(
       colliderDesc.setCollisionGroups(REMOTE_RAGDOLL_GROUPS),
       body,
     );
+    registerCollider(collider.handle, { kind: 'remote', sessionId, part: name });
+    colliderHandles.push(collider.handle);
     return { name, body };
   }
 
@@ -98,6 +120,9 @@ export function createRemoteRagdoll(
   // the wire pose says each frame.
   const skinned = buildRagdollSkinnedMesh(mat, spawnHint);
   scene.add(skinned.mesh);
+
+  const killCounter: KillCounter = createKillCounter();
+  skinned.bones.torso.add(killCounter.sprite);
 
   // Grapple line — remote endpoint comes from grap message. Matches local
   // player's grapple rendering: world-unit thickness for perspective taper,
@@ -138,9 +163,24 @@ export function createRemoteRagdoll(
 
   const tmpHandWorld = new THREE.Vector3();
   const tmpHandQuat = new THREE.Quaternion();
+  // Held across applyPose() calls so collision.drain (which runs on the
+  // local physics substep) can read the most-recent broadcast values.
+  const state: { lastSpeed: number | null; lastVel: { x: number; y: number; z: number } | null } = {
+    lastSpeed: null,
+    lastVel: null,
+  };
 
-  function applyPose(pose: number[] | Float32Array, grap: number[] | Float32Array): void {
+  function applyPose(
+    pose: number[] | Float32Array,
+    speed: number,
+    vel: number[] | Float32Array,
+    grap: number[] | Float32Array,
+  ): void {
     if (pose.length < POSE_FLOATS) return;
+    state.lastSpeed = speed;
+    if (vel.length >= 3) {
+      state.lastVel = { x: vel[0], y: vel[1], z: vel[2] };
+    }
     for (let i = 0; i < POSE_PART_ORDER.length; i++) {
       const o = i * 7;
       const part = parts[i];
@@ -176,8 +216,18 @@ export function createRemoteRagdoll(
     }
   }
 
+  function setVisible(v: boolean): void {
+    skinned.mesh.visible = v;
+  }
+
+  function setKillCount(n: number): void {
+    killCounter.setCount(n);
+  }
+
   function dispose(): void {
+    for (const h of colliderHandles) unregisterCollider(h);
     for (const p of parts) world.removeRigidBody(p.body);
+    killCounter.dispose();
     scene.remove(skinned.mesh);
     skinned.dispose();
     scene.remove(grappleLine);
@@ -194,7 +244,11 @@ export function createRemoteRagdoll(
     grappleLine,
     label,
     mesh: skinned.mesh,
+    get lastSpeed() { return state.lastSpeed; },
+    get lastVel() { return state.lastVel; },
     applyPose,
+    setVisible,
+    setKillCount,
     dispose,
   };
 }

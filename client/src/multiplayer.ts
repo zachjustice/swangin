@@ -5,12 +5,17 @@ import { getStateCallbacks } from 'colyseus.js';
 import { createRemoteRagdoll, RemoteRagdoll } from './remote-ragdoll.ts';
 import { POSE_PART_ORDER } from './ragdoll-proportions.ts';
 import { POSE_FLOATS, type PoseMessage } from './pose-codec.ts';
+import { clearPeerCooldown, type PeerSpeedInfo } from './collision.ts';
+import type { Confetti } from './confetti.ts';
 
-// Identity only — pose ships via room messages so we can timestamp + interpolate.
+// Identity + score. Pose ships via room messages so we can timestamp +
+// interpolate. The `kills` field is the only piece of authoritative
+// game-state today — server credits it on a `died` message.
 interface PlayerState {
   userId: string;
   name: string;
   color: number;
+  kills: number;
 }
 
 interface RoomState {
@@ -23,15 +28,30 @@ interface PoseEnvelope extends PoseMessage {
   t: number; // arrival time (set on receipt)
 }
 
+interface ConfettiBroadcast {
+  victimSession: string;
+  killerSession: string;
+  color: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
 // ~100ms playback delay per PLAN.md — give the buffer 2 samples to lerp between
 // even with one missed packet. 20Hz send cadence = ~50ms between samples.
 const INTERP_DELAY_MS = 100;
 const BUFFER_MAX = 12; // 600ms — enough headroom for short stalls.
+// Time after a peer confetti broadcast to keep their mesh hidden. The next
+// pose tick from the respawned peer naturally re-shows it; this is a safety
+// net in case that tick is delayed.
+const REMOTE_MESH_HIDE_FALLBACK_MS = 2000;
 
-interface Peer {
+export interface Peer extends PeerSpeedInfo {
   state: PlayerState;
   ragdoll: RemoteRagdoll;
   buffer: PoseEnvelope[];
+  // `setKillCount` proxy so collision code never reaches into the schema —
+  // the Multiplayer instance bridges Colyseus diffs to ragdoll setters.
 }
 
 export interface MultiplayerOptions {
@@ -42,6 +62,10 @@ export interface MultiplayerOptions {
   userId: string;
   name: string;
   color: number;
+  confetti: Confetti;
+  // Local ragdoll handle — needed so we can bridge the local player's
+  // `kills` schema diff to the local kill-counter sprite.
+  localRagdoll: { setKillCount(n: number): void };
 }
 
 const tmpQA = new THREE.Quaternion();
@@ -71,6 +95,7 @@ export class Multiplayer {
   private room: Colyseus.Room<RoomState> | null = null;
   private mySessionId: string | null = null;
   private readonly peers = new Map<string, Peer>();
+  private readonly remoteHideUntil = new Map<string, number>();
   private readonly outPose: number[] = new Array(POSE_FLOATS);
   // Fallback to local boot time if state hasn't synced yet — keeps the orb
   // animating from frame 1 instead of staring at a flat sphere.
@@ -87,6 +112,14 @@ export class Multiplayer {
   // client sees the same phase modulo small NTP drift.
   get roomTime(): number {
     return (Date.now() - this.startedAt) / 1000;
+  }
+
+  get sessionId(): string | null {
+    return this.mySessionId;
+  }
+
+  getPeer(sessionId: string): Peer | undefined {
+    return this.peers.get(sessionId);
   }
 
   async connect(): Promise<void> {
@@ -108,9 +141,25 @@ export class Multiplayer {
       if (v) this.startedAt = v;
     });
     $(room.state).players.onAdd((player: PlayerState, sessionId: string) => {
-      if (sessionId === this.mySessionId) return;
+      if (sessionId === this.mySessionId) {
+        // Bridge local kills schema diff to the local kill-counter sprite.
+        $(player).listen('kills', (n: number) => {
+          this.opts.localRagdoll.setKillCount(n);
+        });
+        // Apply current value (in case it was non-zero on rejoin).
+        this.opts.localRagdoll.setKillCount(player.kills ?? 0);
+        return;
+      }
       console.log(`[mp] +peer ${player.name} (${sessionId})`);
       this.addPeer(sessionId, player);
+      // Bridge peer kills to their sprite.
+      const peer = this.peers.get(sessionId);
+      if (peer) {
+        peer.ragdoll.setKillCount(player.kills ?? 0);
+        $(player).listen('kills', (n: number) => {
+          peer.ragdoll.setKillCount(n);
+        });
+      }
     });
     $(room.state).players.onRemove((player: PlayerState, sessionId: string) => {
       console.log(`[mp] -peer ${player.name} (${sessionId})`);
@@ -124,6 +173,20 @@ export class Multiplayer {
       peer.buffer.push(env);
       if (peer.buffer.length > BUFFER_MAX) peer.buffer.shift();
     });
+
+    room.onMessage<ConfettiBroadcast>('confetti', (msg) => {
+      // Pop confetti at the broadcast position regardless of whether we
+      // have the peer locally (e.g. third tab spectator).
+      this.opts.confetti.burst(msg.x, msg.y, msg.z, msg.color);
+      const peer = this.peers.get(msg.victimSession);
+      if (peer) {
+        peer.ragdoll.setVisible(false);
+        this.remoteHideUntil.set(
+          msg.victimSession,
+          performance.now() + REMOTE_MESH_HIDE_FALLBACK_MS,
+        );
+      }
+    });
   }
 
   sendPose(payload: PoseMessage): void {
@@ -131,38 +194,62 @@ export class Multiplayer {
     this.room.send('pose', payload);
   }
 
+  sendDied(killerSessionId: string, x: number, y: number, z: number): void {
+    if (!this.room) return;
+    this.room.send('died', { killerSessionId, x, y, z });
+  }
+
   // Call once per render frame. Samples each peer's buffer at now - INTERP_DELAY_MS
   // and applies the interpolated pose to its kinematic ragdoll.
   update(): void {
-    const renderTime = performance.now() - INTERP_DELAY_MS;
-    for (const peer of this.peers.values()) {
+    const now = performance.now();
+    const renderTime = now - INTERP_DELAY_MS;
+    for (const [sid, peer] of this.peers) {
       const buf = peer.buffer;
       if (buf.length === 0) continue;
+      let appliedFresh = false;
       if (buf.length === 1 || renderTime <= buf[0].t) {
-        peer.ragdoll.applyPose(buf[0].pose, buf[0].grap);
-        continue;
+        peer.ragdoll.applyPose(buf[0].pose, buf[0].speed, buf[0].vel, buf[0].grap);
+        appliedFresh = true;
+      } else {
+        const last = buf[buf.length - 1];
+        if (renderTime >= last.t) {
+          peer.ragdoll.applyPose(last.pose, last.speed, last.vel, last.grap);
+          appliedFresh = true;
+          // Trim everything but the most-recent sample so we don't grow forever
+          // when render falls behind the buffer.
+          if (buf.length > 1) peer.buffer = [last];
+        } else {
+          // Find the pair straddling renderTime.
+          for (let i = buf.length - 1; i > 0; i--) {
+            const b = buf[i];
+            const a = buf[i - 1];
+            if (a.t <= renderTime && renderTime <= b.t) {
+              const span = b.t - a.t || 1;
+              const alpha = (renderTime - a.t) / span;
+              lerpPose(a, b, alpha, this.outPose);
+              // Carry grapple state with no interp — match the newer sample.
+              // Same for speed/vel (using the newer sample is closer to "now").
+              peer.ragdoll.applyPose(this.outPose, b.speed, b.vel, b.grap);
+              appliedFresh = true;
+              // Drop samples older than `a` so buffer can't grow unboundedly.
+              if (i - 1 > 0) peer.buffer = buf.slice(i - 1);
+              break;
+            }
+          }
+        }
       }
-      const last = buf[buf.length - 1];
-      if (renderTime >= last.t) {
-        peer.ragdoll.applyPose(last.pose, last.grap);
-        // Trim everything but the most-recent sample so we don't grow forever
-        // when render falls behind the buffer.
-        if (buf.length > 1) peer.buffer = [last];
-        continue;
-      }
-      // Find the pair straddling renderTime.
-      for (let i = buf.length - 1; i > 0; i--) {
-        const b = buf[i];
-        const a = buf[i - 1];
-        if (a.t <= renderTime && renderTime <= b.t) {
-          const span = b.t - a.t || 1;
-          const alpha = (renderTime - a.t) / span;
-          lerpPose(a, b, alpha, this.outPose);
-          // Carry grapple state with no interp — match the newer sample.
-          peer.ragdoll.applyPose(this.outPose, b.grap);
-          // Drop samples older than `a` so buffer can't grow unboundedly.
-          if (i - 1 > 0) peer.buffer = buf.slice(i - 1);
-          break;
+
+      // Re-show a previously hidden peer once new pose data flows OR the
+      // safety window expires.
+      if (appliedFresh && this.remoteHideUntil.has(sid)) {
+        this.remoteHideUntil.delete(sid);
+        peer.ragdoll.setVisible(true);
+      } else {
+        const until = this.remoteHideUntil.get(sid);
+        if (until !== undefined && now > until) {
+          this.remoteHideUntil.delete(sid);
+          peer.ragdoll.setVisible(true);
         }
       }
     }
@@ -172,11 +259,16 @@ export class Multiplayer {
     const ragdoll = createRemoteRagdoll(
       this.opts.scene,
       this.opts.world,
+      sessionId,
       state.color,
       state.name,
       this.opts.spawnHint,
     );
-    this.peers.set(sessionId, { state, ragdoll, buffer: [] });
+    this.peers.set(sessionId, {
+      state, ragdoll, buffer: [],
+      get lastSpeed() { return ragdoll.lastSpeed; },
+      get lastVel() { return ragdoll.lastVel; },
+    });
   }
 
   private removePeer(sessionId: string): void {
@@ -184,6 +276,8 @@ export class Multiplayer {
     if (!peer) return;
     peer.ragdoll.dispose();
     this.peers.delete(sessionId);
+    this.remoteHideUntil.delete(sessionId);
+    clearPeerCooldown(sessionId);
   }
 }
 

@@ -21,6 +21,9 @@ import {
   NECK_KP, NECK_KD,
 } from './ragdoll-tuning.ts';
 import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
+import { registerCollider, unregisterCollider } from './collision.ts';
+import { createKillCounter, type KillCounter } from './kill-counter.ts';
+import { COLLISION_SPEED_EMA_ALPHA } from './constants.ts';
 
 // 10-body humanoid skeleton, joined entirely by spherical impulse joints.
 // Cuboid limbs (flat-face contact at each joint brakes long-axis twist) +
@@ -58,8 +61,16 @@ export interface Ragdoll {
   // Single SkinnedMesh covering torso + limb segments; the head sphere and
   // foot meshes are non-skinned children parented to their bones.
   mesh: THREE.SkinnedMesh;
+  // EMA-smoothed |torso.linvel()|, updated each physics substep. Drives
+  // both the local collision-rule check and the value shipped on the wire
+  // for remote-side rule comparison.
+  smoothedSpeed: number;
   sync(): void;
   respawn(spawn: THREE.Vector3): void;
+  updateSpeed(dt: number): void;
+  setVisible(v: boolean): void;
+  setKillCount(n: number): void;
+  linvel(): { x: number; y: number; z: number };
   dispose(): void;
 }
 
@@ -71,6 +82,7 @@ export function createRagdoll(
 ): Ragdoll {
   const mat = new THREE.MeshStandardMaterial({ color, ...MATERIAL });
   const parts: Part[] = [];
+  const colliderHandles: number[] = [];
 
   function makePart(
     name: PosePart,
@@ -100,13 +112,18 @@ export function createRagdoll(
           || name === 'armLowerL' || name === 'armLowerR')
         ? ARM_GROUPS
         : LEG_GROUPS;
-    world.createCollider(
+    const collider = world.createCollider(
       colliderDesc
         .setMass(PART_MASS[name])
         .setFriction(COLLIDER_FRICTION)
         .setCollisionGroups(groups),
       body,
     );
+    // Register for cross-player collision lookup. sessionId stays null —
+    // null literally means "this is the local player" everywhere downstream,
+    // so we don't have to backfill when Colyseus resolves.
+    registerCollider(collider.handle, { kind: 'local', sessionId: null, part: name });
+    colliderHandles.push(collider.handle);
     const part: Part = {
       name, body,
       initialOffset: centerWorld.clone().sub(spawn),
@@ -244,6 +261,15 @@ export function createRagdoll(
   const skinned = buildRagdollSkinnedMesh(mat, spawn);
   scene.add(skinned.mesh);
 
+  // Kill-counter billboard parented to the torso bone. Hidden at 0;
+  // setKillCount() flips visibility and redraws the canvas.
+  const killCounter: KillCounter = createKillCounter();
+  skinned.bones.torso.add(killCounter.sprite);
+
+  // EMA-smoothed |torso linvel|. Updated each physics substep. Used for the
+  // collision threshold check and broadcast on the wire.
+  const speedState = { value: 0 };
+
   function sync() {
     for (const part of parts) {
       const t = part.body.translation();
@@ -264,7 +290,28 @@ export function createRagdoll(
       part.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
       part.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
+    speedState.value = 0;
     sync();
+  }
+
+  function updateSpeed(_dt: number) {
+    // α is per-substep (60 Hz). _dt is informational — keeping the param
+    // makes the call site read consistently with motor.update(dt) etc.
+    const v = torso.body.linvel();
+    const raw = Math.hypot(v.x, v.y, v.z);
+    speedState.value += COLLISION_SPEED_EMA_ALPHA * (raw - speedState.value);
+  }
+
+  function setVisible(v: boolean) {
+    skinned.mesh.visible = v;
+  }
+
+  function setKillCount(n: number) {
+    killCounter.setCount(n);
+  }
+
+  function linvel() {
+    return torso.body.linvel();
   }
 
   sync();
@@ -301,6 +348,8 @@ export function createRagdoll(
   );
 
   function dispose() {
+    for (const h of colliderHandles) unregisterCollider(h);
+    killCounter.dispose();
     scene.remove(skinned.mesh);
     skinned.dispose();
     mat.dispose();
@@ -315,8 +364,13 @@ export function createRagdoll(
     motors,
     material: mat,
     mesh: skinned.mesh,
+    get smoothedSpeed() { return speedState.value; },
     sync,
     respawn,
+    updateSpeed,
+    setVisible,
+    setKillCount,
+    linvel,
     dispose,
   };
 }

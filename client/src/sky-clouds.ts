@@ -62,8 +62,15 @@ const FRAG = /* glsl */`
     float horizonFade = smoothstep(-0.25, 0.08, vDir.y);
     cloud *= horizonFade;
 
-    vec3 color = mix(vec3(0.88, 0.93, 1.0), vec3(1.0, 1.0, 1.0), cloud);
-    gl_FragColor = vec4(color, cloud * 0.55);
+    // Cloud peak softened off pure white so it stays well below the bloom
+    // threshold; base tint is the hazy sky color so thin wisps blend in.
+    // Underside shade: clouds near the horizon read slightly darker than
+    // clouds overhead, selling soft overhead light without dimming the scene.
+    float lit = mix(0.82, 1.0, smoothstep(-0.1, 0.6, vDir.y));
+    vec3 peak = vec3(0.92, 0.94, 0.96) * lit;
+    vec3 base = vec3(0.78, 0.84, 0.92);
+    vec3 color = mix(base, peak, cloud);
+    gl_FragColor = vec4(color, cloud * 0.40);
   }
 `;
 
