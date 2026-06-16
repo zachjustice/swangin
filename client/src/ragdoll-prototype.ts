@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import rawConfig from './ragdoll-config.json' with { type: 'json' };
-import type { RagdollConfig } from './ragdoll-proportions.ts';
 import {
-  buildSweepGeometry, resampleSplinesPair, sliceProfileAtY,
-  profileHalfHeight, profileMaxRadius, roundedSplinePoints,
+  type RagdollConfig, resolveProportions, STIFFNESS_GAP, type PosePart,
+} from './ragdoll-proportions.ts';
+import {
+  resampleSplinesPair, roundedSplinePoints,
   type Spline, type Profile,
 } from './ragdoll-spline-sampling.ts';
-import { buildFootGeometry, addHeadDecorations } from './ragdoll-visuals.ts';
+import { buildRagdollSkinnedMesh, type BoneRest } from './ragdoll-skinned-mesh.ts';
 
 // Standalone prototype: a static, parametric ragdoll hung in space with a side
 // panel of sliders + 3 spline editors (torso, arm, leg). The arm and leg
@@ -30,24 +31,24 @@ type GroupName = 'torso' | 'arm' | CompoundLimb;
 // silhouette is the WHOLE limb; the joint Y (in jointKey) splits it at the knee.
 // Arm is a single segment (no elbow) so it has no jointKey.
 const GROUP_KEYS: Record<GroupName, {
-  sideSpline:  keyof Config; frontSpline:  keyof Config;
+  sideSpline: keyof Config; frontSpline: keyof Config;
   sideProfile: keyof Config; frontProfile: keyof Config;
-  jointKey?:   keyof Config;
+  jointKey?: keyof Config;
 }> = {
   torso: { sideSpline: 'torsoSideSpline', frontSpline: 'torsoFrontSpline', sideProfile: 'torsoSideProfile', frontProfile: 'torsoFrontProfile' },
-  arm:   { sideSpline: 'armSideSpline',   frontSpline: 'armFrontSpline',   sideProfile: 'armSideProfile',   frontProfile: 'armFrontProfile' },
-  leg:   { sideSpline: 'legSideSpline',   frontSpline: 'legFrontSpline',   sideProfile: 'legSideProfile',   frontProfile: 'legFrontProfile',   jointKey: 'legJointY' },
+  arm: { sideSpline: 'armSideSpline', frontSpline: 'armFrontSpline', sideProfile: 'armSideProfile', frontProfile: 'armFrontProfile' },
+  leg: { sideSpline: 'legSideSpline', frontSpline: 'legFrontSpline', sideProfile: 'legSideProfile', frontProfile: 'legFrontProfile', jointKey: 'legJointY' },
 };
 
 // Resample one group's splines into matched-Y profile arrays on the config.
 // Called from the editor's pointermove on every drag so the live mesh follows.
 function resampleGroup(c: Config, name: GroupName) {
   const k = GROUP_KEYS[name];
-  const side  = c[k.sideSpline]  as Spline | undefined;
+  const side = c[k.sideSpline] as Spline | undefined;
   const front = c[k.frontSpline] as Spline | undefined;
   if (!side || !front || side.length < 2 || front.length < 2) return;
   const r = resampleSplinesPair(side, front);
-  (c as unknown as Record<string, unknown>)[k.sideProfile  as string] = r.side;
+  (c as unknown as Record<string, unknown>)[k.sideProfile as string] = r.side;
   (c as unknown as Record<string, unknown>)[k.frontProfile as string] = r.front;
 }
 
@@ -62,7 +63,7 @@ function ensureSplinesSeeded(c: Config) {
   function seedFrom(src: Profile | undefined, fallback: Spline): Spline {
     if (!src || src.length < 5) return fallback;
     const idxs = [0, Math.floor(src.length * 0.25), Math.floor(src.length * 0.5),
-                  Math.floor(src.length * 0.75), src.length - 1];
+      Math.floor(src.length * 0.75), src.length - 1];
     const out = idxs.map((i) => [src[i][0], src[i][1]] as [number, number]);
     out[0][0] = 0;
     out[out.length - 1][0] = 0;
@@ -81,129 +82,67 @@ function ensureSplinesSeeded(c: Config) {
   }
 }
 
-// Resolve the upper + lower half profiles for a compound limb (arm or leg)
-// from the freshly-resampled full profiles stored on the config.
-function compoundHalves(c: Config, group: CompoundLimb): {
-  upper: { side: Profile; front: Profile };
-  lower: { side: Profile; front: Profile };
-} {
-  const k = GROUP_KEYS[group];
-  const side  = c[k.sideProfile  as string as keyof Config] as Profile;
-  const front = c[k.frontProfile as string as keyof Config] as Profile;
-  const jointY = c[k.jointKey!   as keyof Config] as number;
-  return sliceProfileAtY({ side, front }, jointY);
-}
-
 // ---------- Ragdoll assembly (static pose) ----------
 
-function buildRagdoll(c: Config): { root: THREE.Group; material: THREE.Material; eyeMaterial: THREE.Material } {
+// Static T-pose rest overrides for the upper + lower arm bones. The factory's
+// default rest places arms hanging straight down (matches the live-game
+// spawn); the tuner wants each arm laid out horizontally outward so the
+// front/side spline sliders shape an unobstructed silhouette. Rotation:
+// ±π/2 around Z; translation: the live-game spawn arithmetic substituting
+// the outward-X axis for the downward-Y axis the hanging pose uses.
+function tPoseArmOverrides(
+  p: ReturnType<typeof resolveProportions>,
+): Partial<Record<PosePart, BoneRest>> {
+  const overrides: Partial<Record<PosePart, BoneRest>> = {};
+  for (const side of [-1, 1] as const) {
+    const angle = side * Math.PI / 2;
+    const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), angle);
+    const shoulderX = side * p.shoulderOffsetX;
+    const upperC = new THREE.Vector3(
+      shoulderX + side * (STIFFNESS_GAP + p.armUpper.halfLen),
+      p.shoulderOffsetY, 0,
+    );
+    const lowerC = new THREE.Vector3(
+      shoulderX + side * (3 * STIFFNESS_GAP + 2 * p.armUpper.halfLen + p.armLower.halfLen),
+      p.shoulderOffsetY, 0,
+    );
+    if (side < 0) {
+      overrides.armUpperL = { position: upperC, quaternion: quat };
+      overrides.armLowerL = { position: lowerC, quaternion: quat };
+    } else {
+      overrides.armUpperR = { position: upperC, quaternion: quat };
+      overrides.armLowerR = { position: lowerC, quaternion: quat };
+    }
+  }
+  return overrides;
+}
+
+interface PrototypeRagdoll {
+  root: THREE.Group;
+  material: THREE.MeshStandardMaterial;
+  dispose: () => void;
+}
+
+function buildRagdoll(c: Config): PrototypeRagdoll {
   const root = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(c.color),
     roughness: c.roughness,
     metalness: c.metalness,
   });
-  // Leg is sliced at its joint Y (knee). Arm is a single segment — its full
-  // profile drives one mesh from shoulder to wrist.
-  const armSide  = c.armSideProfile  as Profile;
-  const armFront = c.armFrontProfile as Profile;
-  const leg = compoundHalves(c, 'leg');
-
-  const armHalfH      = profileHalfHeight(armSide);
-  const thighHalfH    = profileHalfHeight(leg.upper.side);
-  const shinHalfH     = profileHalfHeight(leg.lower.side);
-
-  const armR  = profileMaxRadius(armFront, armSide);
-  const shinR = profileMaxRadius(leg.lower.front, leg.lower.side);
-
-  const SHX = c.torsoRadius + armR + c.shoulderGapX;
-  const SHY = c.shoulderOffsetY;
-  const HX  = c.torsoRadius * c.hipOffsetXRatio;
-
-  const torso = new THREE.Group();
-  torso.add(new THREE.Mesh(
-    buildSweepGeometry(c.torsoFrontProfile, c.torsoSideProfile, c.torsoRadialSegs),
-    mat,
-  ));
-  root.add(torso);
-
-  // Head — Y is the explicit headOffsetY (decoupled from torsoHalfHeight).
-  const head = new THREE.Mesh(new THREE.SphereGeometry(c.headRadius, 20, 16), mat);
-  head.position.set(0, c.headOffsetY, 0);
-  const eyeMat = addHeadDecorations(head, c.headRadius, c.eyeRRatio);
-  root.add(head);
-
-  function limbMesh(front: Profile, side: Profile): THREE.Mesh {
-    return new THREE.Mesh(buildSweepGeometry(front, side, c.radialSegs), mat);
-  }
-
-  // Ellipsoid joint ball at a limb seam, sized to the cross-section radii
-  // (last-row x of the upper-segment profiles after recentering). Matches the
-  // joint ball the live ragdoll adds in ragdoll-visuals.ts.
-  function jointBall(parent: THREE.Object3D, yCenter: number,
-                     upperFront: Profile, upperSide: Profile) {
-    const frontR = upperFront[upperFront.length - 1][0];
-    const sideR  = upperSide [upperSide .length - 1][0];
-    const r = Math.max(frontR, sideR, 1e-4);
-    const ball = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), mat);
-    ball.scale.set(frontR / r, 1, sideR / r);
-    ball.position.set(0, yCenter, 0);
-    parent.add(ball);
-  }
-
-  // Arms: shoulder-pivoted group, single tapered mesh hangs from shoulder
-  // straight to wrist (no elbow).
-  for (const side of [-1, 1] as const) {
-    const armGroup = new THREE.Group();
-    armGroup.position.set(side * SHX, SHY, 0);
-
-    const armMesh = limbMesh(armFront, armSide);
-    armMesh.position.set(0, -armHalfH, 0);
-    armGroup.add(armMesh);
-
-    root.add(armGroup);
-  }
-
-  // Legs: pivot at hipOffsetY.
-  for (const side of [-1, 1] as const) {
-    const legGroup = new THREE.Group();
-    legGroup.position.set(side * HX, c.hipOffsetY, 0);
-
-    const thigh = limbMesh(leg.upper.front, leg.upper.side);
-    thigh.position.set(0, -thighHalfH, 0);
-    legGroup.add(thigh);
-
-    const shin = new THREE.Group();
-    shin.add(limbMesh(leg.lower.front, leg.lower.side));
-    const fw = shinR * c.footW;
-    const fh = shinR * c.footH;
-    const fd = shinR * c.footD;
-    const fr = shinR * c.footCornerRadius;
-    const foot = new THREE.Mesh(buildFootGeometry(fw, fh, fd, fr), mat);
-    // Top of the dome lands at footTopY (shin-local); mesh is centered, so
-    // center sits half-height below that.
-    foot.position.set(0, c.footTopY - fh / 2, shinR * (c.footD / 2 - 1));
-    shin.add(foot);
-    shin.position.set(0, -2 * thighHalfH - shinHalfH, 0);
-    legGroup.add(shin);
-
-    jointBall(legGroup, -2 * thighHalfH, leg.upper.front, leg.upper.side);
-
-    root.add(legGroup);
-  }
-
-  return { root, material: mat, eyeMaterial: eyeMat };
+  const p = resolveProportions(c);
+  const overrides = tPoseArmOverrides(p);
+  const skinned = buildRagdollSkinnedMesh(mat, new THREE.Vector3(), p, overrides);
+  root.add(skinned.mesh);
+  return {
+    root,
+    material: mat,
+    dispose: () => { skinned.dispose(); mat.dispose(); },
+  };
 }
 
-function disposeRagdoll(r: { root: THREE.Group; material: THREE.Material; eyeMaterial: THREE.Material }) {
-  r.root.traverse((obj) => {
-    if ((obj as THREE.Mesh).isMesh) {
-      const m = obj as THREE.Mesh;
-      (m.geometry as THREE.BufferGeometry).dispose();
-    }
-  });
-  r.material.dispose();
-  r.eyeMaterial.dispose();
+function disposeRagdoll(r: PrototypeRagdoll) {
+  r.dispose();
 }
 
 // ---------- UI ----------
@@ -692,14 +631,14 @@ function buildUI(config: Config, rebuild: () => void) {
   // Proportions
   let sec = section('Proportions');
   const props: Array<[keyof Config, string, number, number, number]> = [
-    ['torsoRadius',     'Torso radius (physics)',  0.05, 0.4, 0.005],
-    ['torsoHalfHeight', 'Torso half-h (physics)',  0.05, 0.4, 0.005],
-    ['headRadius',      'Head radius',             0.05, 0.4, 0.005],
-    ['headOffsetY',     'Head Y',                  0.0,  0.8, 0.005],
-    ['hipOffsetY',      'Hip Y',                  -0.5,  0.2, 0.005],
-    ['shoulderGapX',    'Shoulder X gap',         -0.1,  0.2, 0.005],
-    ['shoulderOffsetY', 'Shoulder Y',             -0.3,  0.4, 0.005],
-    ['hipOffsetXRatio', 'Hip X (× torsoR)',        0.0,  1.5, 0.01],
+    ['torsoRadius', 'Torso radius (physics)', 0.05, 0.4, 0.005],
+    ['torsoHalfHeight', 'Torso half-h (physics)', 0.05, 0.4, 0.005],
+    ['headRadius', 'Head radius', 0.05, 0.4, 0.005],
+    ['headOffsetY', 'Head Y', 0.0, 0.8, 0.005],
+    ['hipOffsetY', 'Hip Y', -0.5, 0.2, 0.005],
+    ['shoulderGapX', 'Shoulder X gap', -0.1, 0.2, 0.005],
+    ['shoulderOffsetY', 'Shoulder Y', -0.3, 0.4, 0.005],
+    ['hipOffsetXRatio', 'Hip X (× torsoR)', 0.0, 1.5, 0.01],
   ];
   for (const [k, label, min, max, step] of props) {
     slider(sec, label, min, max, step, config[k] as number, (v) => {
@@ -723,20 +662,20 @@ function buildUI(config: Config, rebuild: () => void) {
   const armOpts: EditorOptions = { W: 280, H: 320, xMax: 0.12, yMin: -0.30, yMax: 0.30 };
   const legOpts: EditorOptions = { W: 280, H: 360, xMax: 0.15, yMin: -0.40, yMax: 0.40 };
   addSingleLimbSection(panel, config, rebuild, 'arm', 'Arm (shoulder → wrist)', armOpts);
-  addCompoundLimbSection(panel, config, rebuild, 'leg', 'Leg (hip → ankle)',      'knee',  legOpts);
+  addCompoundLimbSection(panel, config, rebuild, 'leg', 'Leg (hip → ankle)', 'knee', legOpts);
 
   // Segmentation
   sec = section('Segmentation');
-  slider(sec, 'Limb radial',  6, 48, 1, config.radialSegs,
+  slider(sec, 'Limb radial', 6, 48, 1, config.radialSegs,
     (v) => { config.radialSegs = v | 0; rebuild(); });
   slider(sec, 'Torso radial', 6, 64, 1, config.torsoRadialSegs,
     (v) => { config.torsoRadialSegs = v | 0; rebuild(); });
 
   // Foot
   sec = section('Foot (× shin radius)');
-  slider(sec, 'Width',         0, 4, 0.05, config.footW,           (v) => { config.footW = v; rebuild(); });
-  slider(sec, 'Height',        0, 2, 0.05, config.footH,           (v) => { config.footH = v; rebuild(); });
-  slider(sec, 'Depth',         0, 4, 0.05, config.footD,           (v) => { config.footD = v; rebuild(); });
+  slider(sec, 'Width', 0, 4, 0.05, config.footW, (v) => { config.footW = v; rebuild(); });
+  slider(sec, 'Height', 0, 2, 0.05, config.footH, (v) => { config.footH = v; rebuild(); });
+  slider(sec, 'Depth', 0, 4, 0.05, config.footD, (v) => { config.footD = v; rebuild(); });
   slider(sec, 'Corner radius', 0, 1, 0.01, config.footCornerRadius, (v) => { config.footCornerRadius = v; rebuild(); });
   // Direct world-Y (shin-local) of the dome apex — decouples dome top from
   // foot height so you can slide the foot up/down independently.
@@ -828,6 +767,37 @@ controls.dampingFactor = 0.12;
 controls.minDistance = 0.4;
 controls.maxDistance = 15;
 
+// ---------- Persisted view state (tab + camera) ----------
+const LS_TAB = 'ragdollPrototype.tab';
+const LS_CAM = 'ragdollPrototype.cameraState';
+
+let savedCameraRestored = false;
+try {
+  const raw = localStorage.getItem(LS_CAM);
+  if (raw) {
+    const s = JSON.parse(raw);
+    if (s?.position && s?.target) {
+      camera.position.set(s.position.x, s.position.y, s.position.z);
+      controls.target.set(s.target.x, s.target.y, s.target.z);
+      controls.update();
+      savedCameraRestored = true;
+    }
+  }
+} catch {}
+
+let camSaveTimer: number | undefined;
+controls.addEventListener('change', () => {
+  if (camSaveTimer !== undefined) clearTimeout(camSaveTimer);
+  camSaveTimer = window.setTimeout(() => {
+    try {
+      localStorage.setItem(LS_CAM, JSON.stringify({
+        position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+        target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
+      }));
+    } catch {}
+  }, 200);
+});
+
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.9));
 const dir = new THREE.DirectionalLight(0xfff4e0, 1.5);
 dir.position.set(20, 40, 10);
@@ -868,21 +838,32 @@ const simulatorRoot = new THREE.Group();
 simulatorRoot.visible = false;
 scene.add(simulatorRoot);
 
+interface GrabState {
+  body: any;
+  // Grab point in the body's local frame (so the same point on the limb
+  // stays anchored to the cursor as the body rotates).
+  localPoint: THREE.Vector3;
+  // Latest cursor-projected world target, updated on pointermove.
+  targetWorld: THREE.Vector3;
+  // Plane perpendicular to camera direction through the initial hit; cursor
+  // rays intersect this each frame to derive targetWorld.
+  dragPlane: THREE.Plane;
+}
+
 interface SimState {
   world: any;
+  RAPIER: any;
   ragdoll: any;
   grapple: any;
   anchorPos: THREE.Vector3;
   accumulator: number;
-  meshToBodies: Map<THREE.Object3D, any>;
   raycaster: THREE.Raycaster;
-  draggedBody: any | null;
-  dragPlane: THREE.Plane;
-  dragStartPos: THREE.Vector3;
+  grab: GrabState | null;
 }
 
 let simulatorActive = false;
 let simulatorInitialized = false;
+let simulatorFramedOnce = false;
 let simulatorAnimId: number;
 let simLastTime = 0;
 let simulatorState: SimState | null = null;
@@ -957,27 +938,15 @@ async function initSimulator() {
   ragdoll.motors.grappleAnchor = anchorPos.clone();
   ragdoll.motors.enabled = true;
 
-  // Map every mesh → its Rapier body for drag raycasting.
-  const meshToBodies = new Map<THREE.Object3D, any>();
-  ragdoll.parts.forEach((part: any) => {
-    const walk = (obj: THREE.Object3D) => {
-      if ((obj as THREE.Mesh).isMesh) meshToBodies.set(obj, part.body);
-      obj.children.forEach(walk);
-    };
-    walk(part.mesh);
-  });
-
   simulatorState = {
     world,
+    RAPIER,
     ragdoll,
     grapple,
     anchorPos,
     accumulator: 0,
-    meshToBodies,
     raycaster: new THREE.Raycaster(),
-    draggedBody: null,
-    dragPlane: new THREE.Plane(),
-    dragStartPos: new THREE.Vector3(),
+    grab: null,
   };
 }
 
@@ -1051,10 +1020,10 @@ function buildSimulatorPanel() {
   sec = section('Joint PD');
   const jointDefs: Array<{ name: string; kp: string; kd: string; indices: number[] }> = [
     { name: 'Shoulder', kp: 'shoulderKp', kd: 'shoulderKd', indices: [1, 2] },
-    { name: 'Elbow',    kp: 'elbowKp',   kd: 'elbowKd',   indices: [3, 4] },
-    { name: 'Hip',      kp: 'hipKp',     kd: 'hipKd',     indices: [5, 6] },
-    { name: 'Knee',     kp: 'kneeKp',    kd: 'kneeKd',    indices: [7, 8] },
-    { name: 'Neck',     kp: 'neckKp',    kd: 'neckKd',    indices: [0]    },
+    { name: 'Elbow', kp: 'elbowKp', kd: 'elbowKd', indices: [3, 4] },
+    { name: 'Hip', kp: 'hipKp', kd: 'hipKd', indices: [5, 6] },
+    { name: 'Knee', kp: 'kneeKp', kd: 'kneeKd', indices: [7, 8] },
+    { name: 'Neck', kp: 'neckKp', kd: 'neckKd', indices: [0] },
   ];
   for (const j of jointDefs) {
     const sub = document.createElement('div');
@@ -1077,7 +1046,7 @@ function buildSimulatorPanel() {
   sec = section('Actions');
   const hint = document.createElement('div');
   hint.className = 'hint';
-  hint.textContent = 'Click and drag any limb to apply force. Copy Physics JSON to update ragdoll-config.json.';
+  hint.textContent = 'Click and hold any limb to grab it; release to drop. WASD pans, Q/E rotates, scroll zooms. Copy Physics JSON to update ragdoll-config.json.';
   sec.append(hint);
   const actions = document.createElement('div');
   actions.className = 'actions';
@@ -1112,73 +1081,181 @@ function buildSimulatorPanel() {
   sec.append(actions);
 }
 
+function pointerToNdc(e: PointerEvent): THREE.Vector2 {
+  const rect = renderer.domElement.getBoundingClientRect();
+  return new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+}
+
 function setupSimulatorDrag() {
   const onDown = (e: PointerEvent) => {
     if (!simulatorState) return;
-    const { raycaster, meshToBodies, dragPlane, dragStartPos } = simulatorState;
-    const rect = renderer.domElement.getBoundingClientRect();
-    raycaster.setFromCamera(
-      new THREE.Vector2(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1,
-      ),
-      camera,
+    const { raycaster, world, RAPIER } = simulatorState;
+    raycaster.setFromCamera(pointerToNdc(e), camera);
+    const origin = raycaster.ray.origin;
+    const dir = raycaster.ray.direction;
+    const ray = new RAPIER.Ray(
+      { x: origin.x, y: origin.y, z: origin.z },
+      { x: dir.x, y: dir.y, z: dir.z },
     );
-    let hitBody: any = null;
-    const hitPoint = new THREE.Vector3();
-    for (const [mesh, body] of meshToBodies) {
-      const hits = raycaster.intersectObject(mesh);
-      if (hits.length > 0) { hitBody = body; hitPoint.copy(hits[0].point); break; }
-    }
-    if (hitBody) {
-      simulatorState.draggedBody = hitBody;
-      dragStartPos.copy(hitPoint);
-      dragPlane.setFromNormalAndCoplanarPoint(
-        camera.getWorldDirection(new THREE.Vector3()),
-        hitPoint,
-      );
-      controls.enabled = false;
-    }
+    const hit = world.castRay(ray, 100, true);
+    if (!hit) return;
+    const body = hit.collider.parent();
+    if (!body || body.bodyType() !== RAPIER.RigidBodyType.Dynamic) return;
+
+    const hitWorld = new THREE.Vector3(
+      origin.x + dir.x * hit.timeOfImpact,
+      origin.y + dir.y * hit.timeOfImpact,
+      origin.z + dir.z * hit.timeOfImpact,
+    );
+    // Local-frame grab point so the same spot on the limb tracks the cursor
+    // even as the body rotates.
+    const bt = body.translation();
+    const br = body.rotation();
+    const invRot = new THREE.Quaternion(br.x, br.y, br.z, br.w).invert();
+    const localPoint = hitWorld.clone()
+      .sub(new THREE.Vector3(bt.x, bt.y, bt.z))
+      .applyQuaternion(invRot);
+    const dragPlane = new THREE.Plane().setFromNormalAndCoplanarPoint(
+      camera.getWorldDirection(new THREE.Vector3()),
+      hitWorld,
+    );
+
+    simulatorState.grab = {
+      body,
+      localPoint,
+      targetWorld: hitWorld.clone(),
+      dragPlane,
+    };
+
+    e.preventDefault();
+    e.stopPropagation();
+    renderer.domElement.setPointerCapture(e.pointerId);
   };
 
   const onMove = (e: PointerEvent) => {
-    if (!simulatorState?.draggedBody) return;
-    const { raycaster, draggedBody, dragPlane, dragStartPos } = simulatorState;
-    const rect = renderer.domElement.getBoundingClientRect();
-    raycaster.setFromCamera(
-      new THREE.Vector2(
-        ((e.clientX - rect.left) / rect.width) * 2 - 1,
-        -((e.clientY - rect.top) / rect.height) * 2 + 1,
-      ),
-      camera,
-    );
-    const hit = new THREE.Vector3();
-    if (!raycaster.ray.intersectPlane(dragPlane, hit)) return;
-    const delta = hit.clone().sub(dragStartPos);
-    const m = draggedBody.mass() * 8;
-    draggedBody.applyImpulse({ x: delta.x * m, y: delta.y * m, z: delta.z * m }, true);
-    dragStartPos.copy(hit);
+    if (!simulatorState?.grab) return;
+    const { raycaster, grab } = simulatorState;
+    raycaster.setFromCamera(pointerToNdc(e), camera);
+    const next = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(grab.dragPlane, next)) {
+      grab.targetWorld.copy(next);
+    }
   };
 
-  const onUp = () => {
-    if (simulatorState) simulatorState.draggedBody = null;
-    controls.enabled = true;
+  const onUp = (e: PointerEvent) => {
+    if (simulatorState) simulatorState.grab = null;
+    if (renderer.domElement.hasPointerCapture(e.pointerId)) {
+      renderer.domElement.releasePointerCapture(e.pointerId);
+    }
   };
 
   renderer.domElement.addEventListener('pointerdown', onDown);
   renderer.domElement.addEventListener('pointermove', onMove);
   renderer.domElement.addEventListener('pointerup', onUp);
-  renderer.domElement.addEventListener('pointerleave', onUp);
+  renderer.domElement.addEventListener('pointercancel', onUp);
 
   return () => {
     renderer.domElement.removeEventListener('pointerdown', onDown);
     renderer.domElement.removeEventListener('pointermove', onMove);
     renderer.domElement.removeEventListener('pointerup', onUp);
-    renderer.domElement.removeEventListener('pointerleave', onUp);
+    renderer.domElement.removeEventListener('pointercancel', onUp);
   };
 }
 
+// Per-physics-step force that drives the grabbed body's grab point toward
+// the cursor target. Spring-damper at the grab point — feels like a stiff
+// rubber band rather than instant teleport, so joints stay coherent.
+function applyGrabForce(dt: number) {
+  if (!simulatorState?.grab) return;
+  const { body, localPoint, targetWorld } = simulatorState.grab;
+  const bt = body.translation();
+  const br = body.rotation();
+  const rot = new THREE.Quaternion(br.x, br.y, br.z, br.w);
+  const grabWorld = localPoint.clone().applyQuaternion(rot)
+    .add(new THREE.Vector3(bt.x, bt.y, bt.z));
+  const error = targetWorld.clone().sub(grabWorld);
+  const v = body.linvel();
+  const vel = new THREE.Vector3(v.x, v.y, v.z);
+  const mass = body.mass();
+  const kp = 600;   // pull strength
+  const kd = 30;    // damping
+  const f = error.multiplyScalar(kp).sub(vel.multiplyScalar(kd)).multiplyScalar(mass * dt);
+  body.applyImpulseAtPoint(
+    { x: f.x, y: f.y, z: f.z },
+    { x: grabWorld.x, y: grabWorld.y, z: grabWorld.z },
+    true,
+  );
+}
+
 let cleanupDrag: (() => void) | null = null;
+
+// ---------- Keyboard camera (simulator tab only) ----------
+// WASD pan camera + target in screen-relative directions; Q/E orbit yaw
+// around the target. Cursor is reserved for grabbing the ragdoll.
+const keysHeld = new Set<string>();
+
+function setupKeyboardCamera() {
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (!simulatorActive) return;
+    const tag = (e.target as HTMLElement | null)?.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    const k = e.key.toLowerCase();
+    if ('wasdqe'.includes(k)) {
+      keysHeld.add(k);
+      e.preventDefault();
+    }
+  };
+  const onKeyUp = (e: KeyboardEvent) => {
+    keysHeld.delete(e.key.toLowerCase());
+  };
+  const onBlur = () => keysHeld.clear();
+
+  window.addEventListener('keydown', onKeyDown);
+  window.addEventListener('keyup', onKeyUp);
+  window.addEventListener('blur', onBlur);
+
+  return () => {
+    window.removeEventListener('keydown', onKeyDown);
+    window.removeEventListener('keyup', onKeyUp);
+    window.removeEventListener('blur', onBlur);
+    keysHeld.clear();
+  };
+}
+
+function updateKeyboardCamera(dt: number) {
+  if (keysHeld.size === 0) return;
+  const offset = camera.position.clone().sub(controls.target);
+  const dist = offset.length();
+  const panSpeed = dist * 1.2;      // m/s at current zoom
+  const rotSpeed = 1.6;              // rad/s
+
+  // Camera-relative basis.
+  const forward = new THREE.Vector3(-offset.x, -offset.y, -offset.z).normalize();
+  const right = new THREE.Vector3().crossVectors(forward, camera.up).normalize();
+  const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+
+  const pan = new THREE.Vector3();
+  if (keysHeld.has('w')) pan.add(up);
+  if (keysHeld.has('s')) pan.sub(up);
+  if (keysHeld.has('d')) pan.add(right);
+  if (keysHeld.has('a')) pan.sub(right);
+  if (pan.lengthSq() > 0) {
+    pan.normalize().multiplyScalar(panSpeed * dt);
+    camera.position.add(pan);
+    controls.target.add(pan);
+  }
+
+  let yaw = 0;
+  if (keysHeld.has('q')) yaw += rotSpeed * dt;
+  if (keysHeld.has('e')) yaw -= rotSpeed * dt;
+  if (yaw !== 0) {
+    const rotated = offset.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    camera.position.copy(controls.target).add(rotated);
+  }
+}
 
 function animateSimulator(now: number) {
   simulatorAnimId = requestAnimationFrame(animateSimulator);
@@ -1193,6 +1270,7 @@ function animateSimulator(now: number) {
   let steps = 0;
   while (simulatorState.accumulator >= 1 / 60 && steps < 5) {
     ragdoll.motors.update(1 / 60);
+    applyGrabForce(1 / 60);
     world.step();
     simulatorState.accumulator -= 1 / 60;
     steps++;
@@ -1200,9 +1278,12 @@ function animateSimulator(now: number) {
 
   ragdoll.sync();
   grapple.update();
+  updateKeyboardCamera(dt);
   controls.update();
   renderer.render(scene, camera);
 }
+
+let cleanupKeys: (() => void) | null = null;
 
 function switchToSimulator() {
   if (simulatorActive) return;
@@ -1212,10 +1293,20 @@ function switchToSimulator() {
   scene.remove(current.root);   // hide static prototype ragdoll
   simulatorRoot.visible = true;
 
-  // Frame the hanging ragdoll from a useful angle with room to zoom.
-  camera.position.set(3.5, 1.2, 3.5);
-  controls.target.set(0, 0.6, 0);
-  controls.update();
+  // In simulator: cursor is reserved for grabbing the ragdoll. Mouse rotate
+  // and pan are off; keyboard drives the camera. Wheel zoom stays on.
+  controls.enableRotate = false;
+  controls.enablePan = false;
+  cleanupKeys = setupKeyboardCamera();
+
+  // Frame the hanging ragdoll from a useful angle on first entry, unless a
+  // saved camera state was restored. Subsequent re-entries keep the user's view.
+  if (!simulatorFramedOnce && !savedCameraRestored) {
+    camera.position.set(3.5, 1.2, 3.5);
+    controls.target.set(0, 0.6, 0);
+    controls.update();
+  }
+  simulatorFramedOnce = true;
 
   panel.innerHTML = '';
 
@@ -1244,6 +1335,12 @@ function switchToPrototype() {
   cancelAnimationFrame(simulatorAnimId);
   cleanupDrag?.();
   cleanupDrag = null;
+  cleanupKeys?.();
+  cleanupKeys = null;
+
+  // Restore mouse orbit for the prototype tab's 3D scene.
+  controls.enableRotate = true;
+  controls.enablePan = true;
 
   simulatorRoot.visible = false;
   scene.add(current.root);   // restore static prototype ragdoll
@@ -1258,13 +1355,22 @@ const tabSimulator = document.getElementById('tab-simulator')!;
 tabPrototype.addEventListener('click', () => {
   tabPrototype.classList.add('active');
   tabSimulator.classList.remove('active');
+  try { localStorage.setItem(LS_TAB, 'prototype'); } catch {}
   switchToPrototype();
 });
 
 tabSimulator.addEventListener('click', () => {
   tabPrototype.classList.remove('active');
   tabSimulator.classList.add('active');
+  try { localStorage.setItem(LS_TAB, 'simulator'); } catch {}
   switchToSimulator();
 });
 
 animatePrototype();
+
+// Restore last-active tab.
+try {
+  if (localStorage.getItem(LS_TAB) === 'simulator') {
+    tabSimulator.click();
+  }
+} catch {}

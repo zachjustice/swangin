@@ -13,7 +13,7 @@ import {
   POSE_PART_ORDER, PosePart, PART_SHAPES, REMOTE_RAGDOLL_GROUPS,
   HAND_LOCAL_Y,
 } from './ragdoll-proportions.ts';
-import { buildPartVisual } from './ragdoll-visuals.ts';
+import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 import { POSE_FLOATS } from './pose-codec.ts';
 
 // Remote ragdoll: 10 kinematic-position bodies (no joints, no motors). Pose is
@@ -21,17 +21,17 @@ import { POSE_FLOATS } from './pose-codec.ts';
 // collide the local ragdoll against remotes "for free".
 
 interface RemotePart {
+  name: PosePart;
   body: RAPIER.RigidBody;
-  mesh: THREE.Object3D;
 }
 
 export interface RemoteRagdoll {
   parts: RemotePart[];
   // Bodies in POSE_PART_ORDER — what applyPose() expects.
   poseBodies: RAPIER.RigidBody[];
-  headMesh: THREE.Object3D;
   grappleLine: Line2;
   label: CSS2DObject;
+  mesh: THREE.SkinnedMesh;
   // pose: 70 floats. grap: [active, ax, ay, az].
   applyPose(pose: number[] | Float32Array, grap: number[] | Float32Array): void;
   dispose(): void;
@@ -64,9 +64,7 @@ export function createRemoteRagdoll(
       colliderDesc.setCollisionGroups(REMOTE_RAGDOLL_GROUPS),
       body,
     );
-    const mesh = buildPartVisual(name, mat);
-    scene.add(mesh);
-    return { body, mesh };
+    return { name, body };
   }
 
   // Approximate per-part offsets from the torso center for the initial layout
@@ -94,6 +92,12 @@ export function createRemoteRagdoll(
     partsByName[name] = part;
     parts.push(part);
   }
+
+  // Single SkinnedMesh covering the whole ragdoll. Bones start at the
+  // spawnHint-derived rest positions; applyPose() rewrites them to whatever
+  // the wire pose says each frame.
+  const skinned = buildRagdollSkinnedMesh(mat, spawnHint);
+  scene.add(skinned.mesh);
 
   // Grapple line — remote endpoint comes from grap message. Matches local
   // player's grapple rendering: world-unit thickness for perspective taper,
@@ -130,7 +134,7 @@ export function createRemoteRagdoll(
   ].join(';');
   const label = new CSS2DObject(labelDiv);
   label.position.set(0, HEAD_RADIUS + 0.25, 0);
-  partsByName.head.mesh.add(label);
+  skinned.bones.head.add(label);
 
   const tmpHandWorld = new THREE.Vector3();
   const tmpHandQuat = new THREE.Quaternion();
@@ -139,12 +143,16 @@ export function createRemoteRagdoll(
     if (pose.length < POSE_FLOATS) return;
     for (let i = 0; i < POSE_PART_ORDER.length; i++) {
       const o = i * 7;
-      const body = parts[i].body;
+      const part = parts[i];
+      const body = part.body;
       body.setNextKinematicTranslation({ x: pose[o + 0], y: pose[o + 1], z: pose[o + 2] });
       body.setNextKinematicRotation({ x: pose[o + 3], y: pose[o + 4], z: pose[o + 5], w: pose[o + 6] });
-      // Sync the visual mesh immediately so we don't wait a physics step.
-      parts[i].mesh.position.set(pose[o + 0], pose[o + 1], pose[o + 2]);
-      parts[i].mesh.quaternion.set(pose[o + 3], pose[o + 4], pose[o + 5], pose[o + 6]);
+      // Drive the bone directly so the SkinnedMesh updates this frame instead
+      // of waiting a physics step for the kinematic body to settle.
+      const bone = skinned.bones[part.name];
+      bone.position.set(pose[o + 0], pose[o + 1], pose[o + 2]);
+      bone.quaternion.set(pose[o + 3], pose[o + 4], pose[o + 5], pose[o + 6]);
+      bone.updateMatrixWorld(true);
     }
 
     const active = grap[0] > 0.5;
@@ -169,10 +177,9 @@ export function createRemoteRagdoll(
   }
 
   function dispose(): void {
-    for (const p of parts) {
-      scene.remove(p.mesh);
-      world.removeRigidBody(p.body);
-    }
+    for (const p of parts) world.removeRigidBody(p.body);
+    scene.remove(skinned.mesh);
+    skinned.dispose();
     scene.remove(grappleLine);
     lineGeom.dispose();
     (grappleLine.material as THREE.Material).dispose();
@@ -184,9 +191,9 @@ export function createRemoteRagdoll(
   return {
     parts,
     poseBodies: parts.map((p) => p.body),
-    headMesh: partsByName.head.mesh,
     grappleLine,
     label,
+    mesh: skinned.mesh,
     applyPose,
     dispose,
   };

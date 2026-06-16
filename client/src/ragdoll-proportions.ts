@@ -197,15 +197,57 @@ export const PART_MASS: Record<PosePart, number> = {
   legR_shin: 1.0,
 };
 
-// --- Torso (kept as explicit knobs for now — the torso splines control its
-// silhouette but the cuboid physics still uses these two scalars). ---
-export const TORSO_RADIUS = CONFIG.torsoRadius;
-export const TORSO_HALF_HEIGHT = CONFIG.torsoHalfHeight;
-export const HEAD_RADIUS = CONFIG.headRadius;
+// --- Resolved proportions bundle.
+//
+// Everything spline- or config-derived used to live as module-level constants
+// computed once from the locked CONFIG. The skinned-mesh factory needs to
+// accept a parallel snapshot when the tuning prototype rebuilds with a
+// slider-mutated config — so this function does the derivation in one place
+// and returns a fresh bundle each call. The legacy module-level constants
+// below still exist; they're now thin re-exports of fields on the default
+// snapshot (`resolveProportions(CONFIG)`) so live-game callers don't change.
+export interface ResolvedProportions {
+  torsoRadius: number;
+  torsoHalfHeight: number;
+  torsoFrontProfile: Profile;
+  torsoSideProfile: Profile;
+  torsoRadialSegs: number;
 
-// --- Whole-limb profile splits ---
-// Arm: split at armJointY into upperArm + forearm (recentered halves).
-// Leg: split at legJointY into thigh + shin (recentered halves).
+  headRadius: number;
+  headOffsetY: number;
+  eyeRRatio: number;
+
+  armUpper: { front: Profile; side: Profile; halfLen: number; radius: number };
+  armLower: { front: Profile; side: Profile; halfLen: number; radius: number };
+  thigh:    { front: Profile; side: Profile; halfLen: number; radius: number };
+  shin:     { front: Profile; side: Profile; halfLen: number; radius: number };
+
+  // Seam cross-section radii — old joint-ball ellipsoid sizing (kept for the
+  // prototype's inline rest-pose preview); the new SkinnedMesh factory infers
+  // them from the profiles directly.
+  elbowFrontRadius: number;
+  elbowSideRadius: number;
+  kneeFrontRadius: number;
+  kneeSideRadius: number;
+
+  hipOffsetY: number;
+  shoulderOffsetX: number;
+  shoulderOffsetY: number;
+  hipOffsetX: number;
+
+  radialSegs: number;
+
+  footW: number; footH: number; footD: number;
+  footCornerRadius: number;
+  footTopY: number;
+  footLocalY: number;
+  footLocalZ: number;
+
+  handLocalY: number;
+
+  material: { roughness: number; metalness: number };
+}
+
 function resolveCompound(side: Spline | undefined, front: Spline | undefined,
   sideStored: Profile | undefined, frontStored: Profile | undefined,
   jointY: number, name: string) {
@@ -214,73 +256,116 @@ function resolveCompound(side: Spline | undefined, front: Spline | undefined,
   return sliceProfileAtY(full, jointY);
 }
 
-const armSplit = resolveCompound(CONFIG.armSideSpline, CONFIG.armFrontSpline,
-  CONFIG.armSideProfile, CONFIG.armFrontProfile,
-  CONFIG.armJointY, 'arm');
-const upperArm = armSplit.upper;
-const lowerArm = armSplit.lower;
+export function resolveProportions(cfg: RagdollConfig): ResolvedProportions {
+  const torsoRadius = cfg.torsoRadius;
 
-const legSplit = resolveCompound(CONFIG.legSideSpline, CONFIG.legFrontSpline,
-  CONFIG.legSideProfile, CONFIG.legFrontProfile,
-  CONFIG.legJointY, 'leg');
-const thigh = legSplit.upper;
-const shin = legSplit.lower;
+  const armSplit = resolveCompound(cfg.armSideSpline, cfg.armFrontSpline,
+    cfg.armSideProfile, cfg.armFrontProfile, cfg.armJointY, 'arm');
+  const upperArm = armSplit.upper;
+  const lowerArm = armSplit.lower;
 
-export const ARM_UPPER_SIDE_PROFILE = upperArm.side;
-export const ARM_UPPER_FRONT_PROFILE = upperArm.front;
-export const ARM_LOWER_SIDE_PROFILE = lowerArm.side;
-export const ARM_LOWER_FRONT_PROFILE = lowerArm.front;
-export const THIGH_SIDE_PROFILE = thigh.side;
-export const THIGH_FRONT_PROFILE = thigh.front;
-export const SHIN_SIDE_PROFILE = shin.side;
-export const SHIN_FRONT_PROFILE = shin.front;
+  const legSplit = resolveCompound(cfg.legSideSpline, cfg.legFrontSpline,
+    cfg.legSideProfile, cfg.legFrontProfile, cfg.legJointY, 'leg');
+  const thigh = legSplit.upper;
+  const shin = legSplit.lower;
 
-// --- Per-limb derived half-lengths and radii (physics box fits the
-// silhouette). ---
-export const ARM_UPPER_HALF_LEN = profileHalfHeight(upperArm.side);
-export const ARM_LOWER_HALF_LEN = profileHalfHeight(lowerArm.side);
-export const THIGH_HALF_LEN = profileHalfHeight(thigh.side);
-export const SHIN_HALF_LEN = profileHalfHeight(shin.side);
+  const armUpperHalfLen = profileHalfHeight(upperArm.side);
+  const armLowerHalfLen = profileHalfHeight(lowerArm.side);
+  const thighHalfLen = profileHalfHeight(thigh.side);
+  const shinHalfLen = profileHalfHeight(shin.side);
 
-export const ARM_UPPER_RADIUS = profileMaxRadius(upperArm.front, upperArm.side);
-export const ARM_LOWER_RADIUS = profileMaxRadius(lowerArm.front, lowerArm.side);
-export const THIGH_RADIUS = profileMaxRadius(thigh.front, thigh.side);
-export const SHIN_RADIUS = profileMaxRadius(shin.front, shin.side);
+  const armUpperRadius = profileMaxRadius(upperArm.front, upperArm.side);
+  const armLowerRadius = profileMaxRadius(lowerArm.front, lowerArm.side);
+  const thighRadius = profileMaxRadius(thigh.front, thigh.side);
+  const shinRadius = profileMaxRadius(shin.front, shin.side);
 
-// Widest of the two — used for shoulder gap math and any place the prior
-// single-arm code referenced ARM_RADIUS.
+  return {
+    torsoRadius,
+    torsoHalfHeight: cfg.torsoHalfHeight,
+    torsoFrontProfile: cfg.torsoFrontProfile,
+    torsoSideProfile: cfg.torsoSideProfile,
+    torsoRadialSegs: cfg.torsoRadialSegs,
+
+    headRadius: cfg.headRadius,
+    headOffsetY: cfg.headOffsetY,
+    eyeRRatio: cfg.eyeRRatio,
+
+    armUpper: { front: upperArm.front, side: upperArm.side, halfLen: armUpperHalfLen, radius: armUpperRadius },
+    armLower: { front: lowerArm.front, side: lowerArm.side, halfLen: armLowerHalfLen, radius: armLowerRadius },
+    thigh:    { front: thigh.front,    side: thigh.side,    halfLen: thighHalfLen,    radius: thighRadius },
+    shin:     { front: shin.front,     side: shin.side,     halfLen: shinHalfLen,     radius: shinRadius },
+
+    elbowSideRadius:  upperArm.side [upperArm.side.length - 1][0],
+    elbowFrontRadius: upperArm.front[upperArm.front.length - 1][0],
+    kneeSideRadius:   thigh.side    [thigh.side.length - 1][0],
+    kneeFrontRadius:  thigh.front   [thigh.front.length - 1][0],
+
+    hipOffsetY: cfg.hipOffsetY,
+    shoulderOffsetX: torsoRadius + armUpperRadius + cfg.shoulderGapX,
+    shoulderOffsetY: cfg.shoulderOffsetY,
+    hipOffsetX: torsoRadius * cfg.hipOffsetXRatio,
+
+    radialSegs: cfg.radialSegs,
+
+    footW: cfg.footW, footH: cfg.footH, footD: cfg.footD,
+    footCornerRadius: cfg.footCornerRadius,
+    footTopY: cfg.footTopY,
+    footLocalY: cfg.footTopY - (shinRadius * cfg.footH) / 2,
+    footLocalZ: shinRadius * (cfg.footD / 2 - 1),
+
+    handLocalY: -armLowerHalfLen,
+
+    material: { roughness: cfg.roughness, metalness: cfg.metalness },
+  };
+}
+
+// Default snapshot from the locked JSON — what the live game uses.
+export const PROPORTIONS: ResolvedProportions = resolveProportions(CONFIG);
+
+// --- Legacy module-level exports.
+//
+// All of these are now thin views onto the default snapshot above. Existing
+// callers (`ragdoll.ts`, `remote-ragdoll.ts`, the prototype's inline tuner)
+// keep working unchanged. New code (the skinned-mesh factory) accepts a
+// `ResolvedProportions` argument so the prototype can pass a fresh snapshot
+// per slider-driven rebuild.
+export const TORSO_RADIUS = PROPORTIONS.torsoRadius;
+export const TORSO_HALF_HEIGHT = PROPORTIONS.torsoHalfHeight;
+export const HEAD_RADIUS = PROPORTIONS.headRadius;
+
+export const ARM_UPPER_SIDE_PROFILE = PROPORTIONS.armUpper.side;
+export const ARM_UPPER_FRONT_PROFILE = PROPORTIONS.armUpper.front;
+export const ARM_LOWER_SIDE_PROFILE = PROPORTIONS.armLower.side;
+export const ARM_LOWER_FRONT_PROFILE = PROPORTIONS.armLower.front;
+export const THIGH_SIDE_PROFILE = PROPORTIONS.thigh.side;
+export const THIGH_FRONT_PROFILE = PROPORTIONS.thigh.front;
+export const SHIN_SIDE_PROFILE = PROPORTIONS.shin.side;
+export const SHIN_FRONT_PROFILE = PROPORTIONS.shin.front;
+
+export const ARM_UPPER_HALF_LEN = PROPORTIONS.armUpper.halfLen;
+export const ARM_LOWER_HALF_LEN = PROPORTIONS.armLower.halfLen;
+export const THIGH_HALF_LEN = PROPORTIONS.thigh.halfLen;
+export const SHIN_HALF_LEN = PROPORTIONS.shin.halfLen;
+
+export const ARM_UPPER_RADIUS = PROPORTIONS.armUpper.radius;
+export const ARM_LOWER_RADIUS = PROPORTIONS.armLower.radius;
+export const THIGH_RADIUS = PROPORTIONS.thigh.radius;
+export const SHIN_RADIUS = PROPORTIONS.shin.radius;
+
 export const ARM_RADIUS = Math.max(ARM_UPPER_RADIUS, ARM_LOWER_RADIUS);
 
-// Cross-section radii at the elbow/knee seams — used to drop an ellipsoid
-// at the joint so the bend reads smooth instead of exposing two flat caps.
-const elbowSeam = {
-  side: upperArm.side[upperArm.side.length - 1][0],
-  front: upperArm.front[upperArm.front.length - 1][0],
-};
-export const ELBOW_SIDE_RADIUS = elbowSeam.side;
-export const ELBOW_FRONT_RADIUS = elbowSeam.front;
+export const ELBOW_SIDE_RADIUS = PROPORTIONS.elbowSideRadius;
+export const ELBOW_FRONT_RADIUS = PROPORTIONS.elbowFrontRadius;
+export const KNEE_SIDE_RADIUS = PROPORTIONS.kneeSideRadius;
+export const KNEE_FRONT_RADIUS = PROPORTIONS.kneeFrontRadius;
 
-const kneeSeam = {
-  side: thigh.side[thigh.side.length - 1][0],
-  front: thigh.front[thigh.front.length - 1][0],
-};
-export const KNEE_SIDE_RADIUS = kneeSeam.side;
-export const KNEE_FRONT_RADIUS = kneeSeam.front;
+export const HEAD_OFFSET_Y = PROPORTIONS.headOffsetY;
+export const HIP_OFFSET_Y = PROPORTIONS.hipOffsetY;
+export const SHOULDER_OFFSET_X = PROPORTIONS.shoulderOffsetX;
+export const SHOULDER_OFFSET_Y = PROPORTIONS.shoulderOffsetY;
+export const HIP_OFFSET_X = PROPORTIONS.hipOffsetX;
 
-// --- Joint anchor offsets (also used by physics in ragdoll.ts) ---
-export const HEAD_OFFSET_Y = CONFIG.headOffsetY;
-export const HIP_OFFSET_Y = CONFIG.hipOffsetY;
-// Shoulder X anchor sits at the side of the torso + the upper arm's widest
-// section + the user's small tunable gap.
-export const SHOULDER_OFFSET_X = TORSO_RADIUS + ARM_UPPER_RADIUS + CONFIG.shoulderGapX;
-export const SHOULDER_OFFSET_Y = CONFIG.shoulderOffsetY;
-export const HIP_OFFSET_X = TORSO_RADIUS * CONFIG.hipOffsetXRatio;
-
-// --- Material settings shared by local + remote ragdoll materials ---
-export const MATERIAL = {
-  roughness: CONFIG.roughness,
-  metalness: CONFIG.metalness,
-} as const;
+export const MATERIAL = PROPORTIONS.material;
 
 // Geometry spec per body (used by both the visual builder and the kinematic
 // remote builder so physics shapes line up exactly). Limbs and torso are
@@ -311,10 +396,10 @@ export const PART_SHAPES: Record<PosePart, PartShape> = {
 // Local-space mesh offsets for ornaments parented under a part (eyes, hand
 // sphere, feet). Used by the visual builder for both local and remote.
 // Hand sits at the wrist (bottom of the forearm).
-export const HAND_LOCAL_Y = -ARM_LOWER_HALF_LEN;
+export const HAND_LOCAL_Y = PROPORTIONS.handLocalY;
 // Foot mesh is centered at its own y=0, so to put its dome apex at
 // footTopY (shin-local) the mesh sits halfway-down from that apex.
-export const FOOT_LOCAL_Y = CONFIG.footTopY - (SHIN_RADIUS * CONFIG.footH) / 2;
+export const FOOT_LOCAL_Y = PROPORTIONS.footLocalY;
 // Place the foot so its back face aligns with the back of the shin
 // (z = -SHIN_RADIUS): footCenterZ - footHalfDepth = -SHIN_RADIUS.
-export const FOOT_LOCAL_Z = SHIN_RADIUS * (CONFIG.footD / 2 - 1);
+export const FOOT_LOCAL_Z = PROPORTIONS.footLocalZ;

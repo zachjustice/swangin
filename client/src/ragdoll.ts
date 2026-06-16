@@ -20,7 +20,7 @@ import {
   KNEE_KP, KNEE_KD,
   NECK_KP, NECK_KD,
 } from './ragdoll-tuning.ts';
-import { buildPartVisual } from './ragdoll-visuals.ts';
+import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 
 // 10-body humanoid skeleton, joined entirely by spherical impulse joints.
 // Cuboid limbs (flat-face contact at each joint brakes long-axis twist) +
@@ -40,8 +40,8 @@ import { buildPartVisual } from './ragdoll-visuals.ts';
 //   legR_thigh ↔ legR_shin              (knee R)
 
 interface Part {
+  name: PosePart;
   body: RAPIER.RigidBody;
-  mesh: THREE.Object3D;
   initialOffset: THREE.Vector3;
   initialRotation: THREE.Quaternion;
 }
@@ -55,8 +55,12 @@ export interface Ragdoll {
   handLocalOffset: THREE.Vector3;
   motors: RagdollMotors;
   material: THREE.MeshStandardMaterial;
+  // Single SkinnedMesh covering torso + limb segments; the head sphere and
+  // foot meshes are non-skinned children parented to their bones.
+  mesh: THREE.SkinnedMesh;
   sync(): void;
   respawn(spawn: THREE.Vector3): void;
+  dispose(): void;
 }
 
 export function createRagdoll(
@@ -103,10 +107,8 @@ export function createRagdoll(
         .setCollisionGroups(groups),
       body,
     );
-    const mesh = buildPartVisual(name, mat);
-    scene.add(mesh);
     const part: Part = {
-      body, mesh,
+      name, body,
       initialOffset: centerWorld.clone().sub(spawn),
       initialRotation: (initialRotation ?? new THREE.Quaternion()).clone(),
     };
@@ -235,12 +237,21 @@ export function createRagdoll(
   };
   const poseBodies = POSE_PART_ORDER.map((n) => partsByName[n].body);
 
+  // Build the single SkinnedMesh that covers all 10 bones. The bones'
+  // rest-world transforms are derived from `spawn` and match the bodies'
+  // spawn-time positions; sync() then drives bone transforms from the
+  // bodies each frame.
+  const skinned = buildRagdollSkinnedMesh(mat, spawn);
+  scene.add(skinned.mesh);
+
   function sync() {
-    for (const { body, mesh } of parts) {
-      const t = body.translation();
-      const r = body.rotation();
-      mesh.position.set(t.x, t.y, t.z);
-      mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    for (const part of parts) {
+      const t = part.body.translation();
+      const r = part.body.rotation();
+      const bone = skinned.bones[part.name];
+      bone.position.set(t.x, t.y, t.z);
+      bone.quaternion.set(r.x, r.y, r.z, r.w);
+      bone.updateMatrixWorld(true);
     }
   }
 
@@ -289,6 +300,12 @@ export function createRagdoll(
     `stiffness gap=${STIFFNESS_GAP}m`,
   );
 
+  function dispose() {
+    scene.remove(skinned.mesh);
+    skinned.dispose();
+    mat.dispose();
+  }
+
   return {
     parts,
     poseBodies,
@@ -297,7 +314,9 @@ export function createRagdoll(
     handLocalOffset: new THREE.Vector3(0, HAND_LOCAL_Y, 0),
     motors,
     material: mat,
+    mesh: skinned.mesh,
     sync,
     respawn,
+    dispose,
   };
 }

@@ -4,8 +4,8 @@
   "headRadius": 0.195,
   "headOffsetY": 0.445,
   "hipOffsetY": -0.16,
-  "shoulderGapX": -0.08,
-  "shoulderOffsetY": 0.265,
+  "shoulderGapX": -0.11,
+  "shoulderOffsetY": 0.245,
   "hipOffsetXRatio": 0.73,
   "torsoSideProfile": [
     [

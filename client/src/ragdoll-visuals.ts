@@ -1,66 +1,11 @@
 import * as THREE from 'three';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import {
-  CONFIG, FOOT_LOCAL_Y, FOOT_LOCAL_Z, HEAD_RADIUS, SHIN_RADIUS,
-  PART_SHAPES, PartShape, PosePart,
-  ARM_UPPER_FRONT_PROFILE, ARM_UPPER_SIDE_PROFILE,
-  ARM_LOWER_FRONT_PROFILE, ARM_LOWER_SIDE_PROFILE,
-  THIGH_FRONT_PROFILE, THIGH_SIDE_PROFILE,
-  SHIN_FRONT_PROFILE, SHIN_SIDE_PROFILE,
-  ARM_UPPER_HALF_LEN, THIGH_HALF_LEN,
-  ELBOW_FRONT_RADIUS, ELBOW_SIDE_RADIUS,
-  KNEE_FRONT_RADIUS, KNEE_SIDE_RADIUS,
-  STIFFNESS_GAP,
-} from './ragdoll-proportions.ts';
-import { buildSweepGeometry, type Profile } from './ragdoll-spline-sampling.ts';
 
-// Shared visual builder for ragdoll body parts. Both the local (dynamic) and
-// the remote (kinematic-position) ragdolls call buildPartVisual() per pose
-// body, so they always look identical. The visuals are pure cosmetics — they
-// do not affect physics; the physics collider still comes from PART_SHAPES.
-//
-// All tunable numbers (silhouette splines, segments, eye/foot ratios) live
-// in ragdoll-config.json and reach us via CONFIG / the derived profile
-// constants in ragdoll-proportions.
-
-// Torso silhouette — uses the explicit torso profiles stored in JSON.
-function buildTorsoGeometry(): THREE.BufferGeometry {
-  return buildSweepGeometry(
-    CONFIG.torsoFrontProfile,
-    CONFIG.torsoSideProfile,
-    CONFIG.torsoRadialSegs,
-  );
-}
-
-// Per-limb-segment elliptical sweep profiles. The matching constants on the
-// proportions module are pre-resolved (either pulled from JSON or derived
-// from the splines on the fly), so this is a pure lookup.
-const LIMB_PROFILES: Partial<Record<PosePart, { front: Profile; side: Profile }>> = {
-  armUpperL: { front: ARM_UPPER_FRONT_PROFILE, side: ARM_UPPER_SIDE_PROFILE },
-  armUpperR: { front: ARM_UPPER_FRONT_PROFILE, side: ARM_UPPER_SIDE_PROFILE },
-  armLowerL: { front: ARM_LOWER_FRONT_PROFILE, side: ARM_LOWER_SIDE_PROFILE },
-  armLowerR: { front: ARM_LOWER_FRONT_PROFILE, side: ARM_LOWER_SIDE_PROFILE },
-  legL_thigh: { front: THIGH_FRONT_PROFILE, side: THIGH_SIDE_PROFILE },
-  legR_thigh: { front: THIGH_FRONT_PROFILE, side: THIGH_SIDE_PROFILE },
-  legL_shin: { front: SHIN_FRONT_PROFILE, side: SHIN_SIDE_PROFILE },
-  legR_shin: { front: SHIN_FRONT_PROFILE, side: SHIN_SIDE_PROFILE },
-};
-
-function buildPrimitive(
-  shape: PartShape,
-  material: THREE.MeshStandardMaterial,
-  name: PosePart,
-): THREE.Mesh {
-  if (name === 'torso') {
-    return new THREE.Mesh(buildTorsoGeometry(), material);
-  }
-  if (shape.kind === 'ball') {
-    return new THREE.Mesh(new THREE.SphereGeometry(shape.r, 20, 16), material);
-  }
-  const p = LIMB_PROFILES[name];
-  if (!p) throw new Error(`buildPartVisual: no profile entry for ${name}`);
-  return new THREE.Mesh(buildSweepGeometry(p.front, p.side, CONFIG.radialSegs), material);
-}
+// Visual helpers shared by the SkinnedMesh factory (ragdoll-skinned-mesh.ts)
+// and the standalone tuning prototype. The per-part rigid-mesh path (the old
+// `buildPartVisual` / joint-ball / per-primitive flow) has been replaced by
+// the single SkinnedMesh factory — only the two primitive builders that ride
+// along on the head bone and shin bones live here now.
 
 // Eyes + smile on a head sphere of the given radius. Returns the shared
 // black material so callers that track lifetimes (e.g. the prototype rebuild
@@ -183,56 +128,4 @@ export function buildFootGeometry(
   const merged = mergeVertices(geom, 1e-6);
   merged.computeVertexNormals();
   return merged;
-}
-
-function addFoot(parent: THREE.Object3D, material: THREE.MeshStandardMaterial) {
-  const w = SHIN_RADIUS * CONFIG.footW;
-  const h = SHIN_RADIUS * CONFIG.footH;
-  const d = SHIN_RADIUS * CONFIG.footD;
-  // footCornerRadius controls both the vertical edge rounding AND the top
-  // dome rolloff radius — one knob for now; expose separately if needed.
-  const r = SHIN_RADIUS * CONFIG.footCornerRadius;
-  const foot = new THREE.Mesh(buildFootGeometry(w, h, d, r), material);
-  foot.position.set(0, FOOT_LOCAL_Y, FOOT_LOCAL_Z);
-  parent.add(foot);
-}
-
-// Ellipsoid parented at the joint pivot below a segment, sized to the
-// segment's seam cross-section. The pivot lives STIFFNESS_GAP below the
-// parent's bottom face (that's where the spherical joint anchor is in the
-// parent's local frame). When the child segment bends, the ball stays at
-// the pivot (it's parented to the parent body, but at the anchor offset,
-// which the joint pins to a single world position) and both segments sweep
-// around it — reads as a knuckle, hides the 2·STIFFNESS_GAP physics gap
-// between visual surfaces.
-function addJointBall(
-  parent: THREE.Object3D,
-  material: THREE.MeshStandardMaterial,
-  segmentHalfH: number,
-  frontR: number,
-  sideR: number,
-) {
-  const r = 0.75 * Math.max(frontR, sideR, 1e-4);
-  const ball = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), material);
-  ball.scale.set(frontR / r, 1, sideR / r);
-  ball.position.set(0, -segmentHalfH - STIFFNESS_GAP, 0);
-  parent.add(ball);
-}
-
-export function buildPartVisual(
-  name: PosePart,
-  material: THREE.MeshStandardMaterial,
-): THREE.Group {
-  const group = new THREE.Group();
-  group.add(buildPrimitive(PART_SHAPES[name], material, name));
-  if (name === 'head') {
-    addHeadDecorations(group, HEAD_RADIUS, CONFIG.eyeRRatio);
-  } else if (name === 'legL_shin' || name === 'legR_shin') {
-    addFoot(group, material);
-  } else if (name === 'legL_thigh' || name === 'legR_thigh') {
-    addJointBall(group, material, THIGH_HALF_LEN, KNEE_FRONT_RADIUS, KNEE_SIDE_RADIUS);
-  } else if (name === 'armUpperL' || name === 'armUpperR') {
-    addJointBall(group, material, ARM_UPPER_HALF_LEN, ELBOW_FRONT_RADIUS, ELBOW_SIDE_RADIUS);
-  }
-  return group;
 }
