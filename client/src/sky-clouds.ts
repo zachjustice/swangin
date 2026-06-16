@@ -1,63 +1,69 @@
 import * as THREE from 'three';
 
-// Animated wispy cloud plane using LDR FBM noise.
-// Output stays in [0,1] so it doesn't interact with the bloom pass.
+// Cloud dome: a large BackSide sphere the player is inside of, so clouds
+// appear in all directions — above, sides, and below the horizon.
+// Uses 3D FBM noise (no UV projection distortion) with domain warp for wisps.
+// All output stays in [0,1] so it never triggers the bloom pass.
 
 const VERT = /* glsl */`
-  varying vec2 vUv;
+  varying vec3 vDir;
   void main() {
-    vUv = uv;
+    vDir = normalize(position);
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
   }
 `;
 
 const FRAG = /* glsl */`
   precision highp float;
-  varying vec2 vUv;
+  varying vec3 vDir;
   uniform float uTime;
 
-  float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123);
+  float hash3(vec3 p) {
+    p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
+    p *= 17.0;
+    return fract(p.x * p.y * p.z * (p.x + p.y + p.z));
   }
 
-  float noise(vec2 p) {
-    vec2 i = floor(p);
-    vec2 f = fract(p);
-    vec2 u = f * f * (3.0 - 2.0 * f);
+  float noise3(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    vec3 u = f * f * (3.0 - 2.0 * f);
     return mix(
-      mix(hash(i),               hash(i + vec2(1.0, 0.0)), u.x),
-      mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), u.x),
-      u.y
+      mix(mix(hash3(i),               hash3(i + vec3(1,0,0)), u.x),
+          mix(hash3(i + vec3(0,1,0)), hash3(i + vec3(1,1,0)), u.x), u.y),
+      mix(mix(hash3(i + vec3(0,0,1)), hash3(i + vec3(1,0,1)), u.x),
+          mix(hash3(i + vec3(0,1,1)), hash3(i + vec3(1,1,1)), u.x), u.y),
+      u.z
     );
   }
 
-  float fbm(vec2 p) {
+  float fbm(vec3 p) {
     float v = 0.0, a = 0.5;
     for (int i = 0; i < 6; i++) {
-      v += a * noise(p);
-      p = p * 2.3 + vec2(1.7, 9.2);
+      v += a * noise3(p);
+      p = p * 2.2 + vec3(1.7, 9.2, 5.4);
       a *= 0.45;
     }
     return v;
   }
 
   void main() {
-    vec2 uv1 = vUv * 2.5 + vec2(uTime * 0.008,  uTime * 0.003);
-    vec2 uv2 = vUv * 4.2 + vec2(uTime * 0.013, -uTime * 0.004);
+    float scale = 5.0;
+    vec3 p = vDir * scale + vec3(uTime * 0.018, 0.0, uTime * 0.009);
 
-    float n1 = fbm(uv1);
-    float n2 = fbm(uv2);
+    float n1 = fbm(p);
+    float n2 = fbm(p + vec3(5.2, 1.3, 2.4));
 
-    // Domain-warp n1 by n2 for wispy tendrils
-    float cloud = fbm(uv1 + vec2(n2 * 0.5, n1 * 0.35));
-    cloud = smoothstep(0.50, 0.73, cloud);
+    // Domain warp: n2 distorts n1 sampling point for wispy tendrils
+    float cloud = fbm(p + vec3(n2 * 0.55, n1 * 0.40, n2 * 0.30));
+    cloud = smoothstep(0.45, 0.68, cloud);
 
-    // Soft radial fade so the plane edge never hard-clips
-    float d = length(vUv - 0.5) * 2.0;
-    cloud *= 1.0 - smoothstep(0.65, 1.0, d);
+    // Fade clouds out below the horizon so they don't paint the ground
+    float horizonFade = smoothstep(-0.25, 0.08, vDir.y);
+    cloud *= horizonFade;
 
     vec3 color = mix(vec3(0.88, 0.93, 1.0), vec3(1.0, 1.0, 1.0), cloud);
-    gl_FragColor = vec4(color, cloud * 0.5);
+    gl_FragColor = vec4(color, cloud * 0.55);
   }
 `;
 
@@ -67,19 +73,17 @@ export interface CloudLayer {
 }
 
 export function createCloudLayer(scene: THREE.Scene): CloudLayer {
-  const geo = new THREE.PlaneGeometry(350, 350);
+  // Radius 450 — fills the view in all directions, stays within camera.far=500
+  const geo = new THREE.SphereGeometry(450, 32, 16);
   const mat = new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: FRAG,
     uniforms: { uTime: { value: 0 } },
     transparent: true,
     depthWrite: false,
-    side: THREE.DoubleSide,
+    side: THREE.BackSide,
   });
   const mesh = new THREE.Mesh(geo, mat);
-  mesh.rotation.x = -Math.PI / 2;
-  mesh.position.y = 80;
-  mesh.renderOrder = 1;
   scene.add(mesh);
 
   return {
