@@ -64,8 +64,13 @@ labelRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(labelRenderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.5));
-const dir = new THREE.DirectionalLight(0xfff4e0, 0.6);
-dir.position.set(20, 18, 10);
+
+// ambient lighting from everywhere
+const light = new THREE.AmbientLight(0xfff4e0, .6); // soft white light
+scene.add(light);
+// a tasteful amount of shadows
+const dir = new THREE.DirectionalLight(0xfff4e0, 0.2);
+dir.position.set(0, 18, 0);
 scene.add(dir);
 
 // EffectComposer pipeline: scene render → UnrealBloomPass. Composer owns final
