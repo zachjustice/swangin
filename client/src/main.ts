@@ -29,7 +29,6 @@ const MOTOR_MIN = 0;
 const MOTOR_MAX = 3.0;
 const POSE_SEND_HZ = 20;
 
-const banner = document.getElementById('banner') as HTMLDivElement;
 const prompt = document.getElementById('prompt') as HTMLDivElement;
 
 const scene = new THREE.Scene();
@@ -109,17 +108,6 @@ const reticle = new CubeReticle(scene, world);
 const grapple = new Grapple(scene, world, ragdoll.grappleHand, ragdoll.handLocalOffset);
 
 let userLabel = '…';
-let peerCount = 0;
-function refreshBanner() {
-  const slack = grapple.slackFactor.toFixed(2);
-  const motors = ragdoll.motors.enabled
-    ? ragdoll.motors.globalMultiplier.toFixed(2)
-    : 'off';
-  banner.textContent =
-    `${userLabel} — ${peerCount} peer(s) · K/L slack=${slack} · ,/. motors=${motors}`;
-}
-refreshBanner();
-
 const keys = { w: false, a: false, s: false, d: false };
 
 let last = performance.now() / 1000;
@@ -132,9 +120,6 @@ function checkRespawn() {
     Math.abs(t.x) > WORLD_HALF ||
     Math.abs(t.z) > WORLD_HALF;
   if (!oob) return;
-  console.warn(
-    `[respawn] torso at (${t.x.toFixed(1)}, ${t.y.toFixed(1)}, ${t.z.toFixed(1)})`,
-  );
   grapple.release();
   ragdoll.respawn(SPAWN_POINT);
 }
@@ -212,7 +197,6 @@ try {
 
 const myColor = colorFromUserId(userId);
 ragdoll.material.color.setHex(myColor);
-refreshBanner();
 
 multiplayer = new Multiplayer({
   scene,
@@ -222,10 +206,6 @@ multiplayer = new Multiplayer({
   userId,
   name: userName,
   color: myColor,
-  onPeerCountChange: (n) => {
-    peerCount = n;
-    refreshBanner();
-  },
 });
 
 multiplayer.connect().then(() => {
@@ -238,7 +218,6 @@ multiplayer.connect().then(() => {
 }).catch((err) => {
   console.error('[mp] failed to join room', err);
   userLabel = `${userLabel} · MP failed`;
-  refreshBanner();
 });
 
 prompt.hidden = true;
@@ -257,28 +236,7 @@ window.addEventListener('mouseup', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'KeyK') {
-    grapple.slackFactor = Math.max(SLACK_MIN, grapple.slackFactor - SLACK_STEP);
-    refreshBanner();
-  } else if (e.code === 'KeyL') {
-    grapple.slackFactor = Math.min(SLACK_MAX, grapple.slackFactor + SLACK_STEP);
-    refreshBanner();
-  } else if (e.code === 'Comma') {
-    ragdoll.motors.globalMultiplier = Math.max(
-      MOTOR_MIN,
-      ragdoll.motors.globalMultiplier - MOTOR_STEP,
-    );
-    refreshBanner();
-  } else if (e.code === 'Period') {
-    ragdoll.motors.globalMultiplier = Math.min(
-      MOTOR_MAX,
-      ragdoll.motors.globalMultiplier + MOTOR_STEP,
-    );
-    refreshBanner();
-  } else if (e.code === 'KeyM') {
-    ragdoll.motors.enabled = !ragdoll.motors.enabled;
-    refreshBanner();
-  } else if (e.code === 'KeyR') {
+  if (e.code === 'KeyR') {
     grapple.release();
     ragdoll.respawn(SPAWN_POINT);
   } else if (e.code === 'KeyW') {

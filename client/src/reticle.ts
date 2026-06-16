@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import RAPIER from '@dimforge/rapier3d-compat';
+import RAPIER, { RayColliderHit } from '@dimforge/rapier3d-compat';
 import { CUBE_SIZE } from './world.ts';
 import { ALL_RAGDOLL_BITS } from './ragdoll-proportions.ts';
 
@@ -15,6 +15,7 @@ export class CubeReticle {
 
   private readonly highlight: THREE.LineSegments;
   private readonly tmpDir = new THREE.Vector3();
+  private hitTime = -1;
 
   constructor(private readonly scene: THREE.Scene, private readonly world: RAPIER.World) {
     const box = new THREE.BoxGeometry(CUBE_SIZE * 1.04, CUBE_SIZE * 1.04, CUBE_SIZE * 1.04);
@@ -35,19 +36,26 @@ export class CubeReticle {
       { x: camera.position.x, y: camera.position.y, z: camera.position.z },
       { x: this.tmpDir.x, y: this.tmpDir.y, z: this.tmpDir.z },
     );
-    const hit = this.world.castRay(ray, MAX_RAY_DIST, true, undefined, QUERY_GROUPS);
-    if (!hit) {
+
+    let hit = this.world.castRay(ray, MAX_RAY_DIST, true, undefined, QUERY_GROUPS);
+    const now = Date.now();
+    if (hit) {
+      this.hitTime = now;
+
+      const pos = hit.collider.translation();
+      this.highlight.position.set(pos.x, pos.y, pos.z);
+      this.highlight.visible = true;
+      this.hitPoint = new THREE.Vector3(
+        camera.position.x + this.tmpDir.x * hit.timeOfImpact,
+        camera.position.y + this.tmpDir.y * hit.timeOfImpact,
+        camera.position.z + this.tmpDir.z * hit.timeOfImpact,
+      );
+
+      return
+    } else if (!hit && (now - this.hitTime) > 1000) {
       this.highlight.visible = false;
       this.hitPoint = null;
       return;
     }
-    const pos = hit.collider.translation();
-    this.highlight.position.set(pos.x, pos.y, pos.z);
-    this.highlight.visible = true;
-    this.hitPoint = new THREE.Vector3(
-      camera.position.x + this.tmpDir.x * hit.timeOfImpact,
-      camera.position.y + this.tmpDir.y * hit.timeOfImpact,
-      camera.position.z + this.tmpDir.z * hit.timeOfImpact,
-    );
   }
 }
