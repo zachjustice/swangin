@@ -53,11 +53,11 @@ const NECK_BLEND_FRAC = 0.2;
 // resolved proportions at construction time (see buildRagdollSkinnedMesh)
 // so the JSON tuner can reshape the torso/limbs without drift; only the
 // radial falloff range + the overshoot margin are fixed here.
-const SHOULDER_BUMP_RADIUS = 0.12;
+const SHOULDER_BUMP_RADIUS = 0.20;
 const HIP_BUMP_RADIUS = 0.06;
 // Small overshoot so the limb tube is fully buried inside the bump instead
 // of cleanly tangent to it (which would leave a visible kissing-curve).
-const BUMP_HEIGHT_MARGIN = 0.10;
+const BUMP_HEIGHT_MARGIN = 0.05;
 
 // Smooth Hermite step from 0 (at edge0) to 1 (at edge1). Used both as a
 // gentle side gate (avoids the crease a binary half-space cull would create
