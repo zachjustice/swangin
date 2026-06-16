@@ -46,6 +46,113 @@ const HIP_BLEND_FRAC = 0.8;
 // a standalone non-skinned sphere; this is purely re-weighting the torso top.
 const NECK_BLEND_FRAC = 0.2;
 
+// Procedural shoulder/hip "bumps" displace torso verts outward toward each
+// limb anchor with a smooth falloff, giving the torso its Gang-Beasts shape
+// (limbs grow out of a soft bulge instead of poking sharply through a thin
+// neck or a smaller-radius hip). The bump heights are DERIVED from the
+// resolved proportions at construction time (see buildRagdollSkinnedMesh)
+// so the JSON tuner can reshape the torso/limbs without drift; only the
+// radial falloff range + the overshoot margin are fixed here.
+const SHOULDER_BUMP_RADIUS = 0.12;
+const HIP_BUMP_RADIUS = 0.06;
+// Small overshoot so the limb tube is fully buried inside the bump instead
+// of cleanly tangent to it (which would leave a visible kissing-curve).
+const BUMP_HEIGHT_MARGIN = 0.10;
+
+// Smooth Hermite step from 0 (at edge0) to 1 (at edge1). Used both as a
+// gentle side gate (avoids the crease a binary half-space cull would create
+// at the torso's X=0 silhouette line) and as the upward Y-clamp that keeps
+// the bump from puffing out the head-weighted top of the torso.
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+// Cosine smoothstep over 3D distance to the bump anchor: 1 at the anchor,
+// 0 at d>=R. Derivative-zero at both endpoints so the bump tapers in/out
+// without a crease.
+function cosineFalloff(d: number, R: number): number {
+  if (d >= R) return 0;
+  return (1 + Math.cos((d / R) * Math.PI)) / 2;
+}
+
+// Linear interpolation of the front profile's X-radius at a given segment-
+// local Y. The profile is sorted top→bottom in Y (y descending). Used to
+// derive bump heights: `localTorsoRadius_at_anchor_Y` tells us how much the
+// torso surface needs to push outward to meet the limb's outer edge.
+function torsoXRadiusAt(front: Profile, y: number): number {
+  const N = front.length;
+  if (N === 0) return 0;
+  if (y >= front[0][1]) return front[0][0];
+  if (y <= front[N - 1][1]) return front[N - 1][0];
+  for (let i = 0; i < N - 1; i++) {
+    const a = front[i], b = front[i + 1];
+    if (a[1] >= y && y >= b[1]) {
+      const dy = a[1] - b[1];
+      if (dy < 1e-9) return a[0];
+      const t = (a[1] - y) / dy;
+      return a[0] + (b[0] - a[0]) * t;
+    }
+  }
+  return front[N - 1][0];
+}
+
+interface TorsoBump {
+  anchor: THREE.Vector3;     // bump centre in WORLD coords
+  outwardDir: THREE.Vector3; // unit XZ outward from torso centerline
+  height: number;            // peak outward displacement (m)
+  radius: number;            // falloff radius (m)
+  // Upper-Y clamp: displacement fades to zero as v.y crosses [yClampStart,
+  // yClampEnd]. Used for shoulder bumps to keep them out of the
+  // NECK_BLEND_FRAC-weighted torso top, which would otherwise pop with the
+  // head's rotation. For hip bumps (no head-weight overlap) yClampEnd is
+  // set above the torso top so the gate is a no-op.
+  yClampStart: number;
+  yClampEnd: number;
+}
+
+// Displace verts in positions[startIdx*3..endIdx*3] by summing each bump's
+// contribution. Each bump contributes `height * radialFalloff * sideGate *
+// upperYGate * outwardDir` to the vertex. Bumps live on the torso bone and
+// move rigidly with it — no skin-weight changes needed.
+const tmpVertV = new THREE.Vector3();
+function displaceTorsoVerts(
+  positions: number[], startIdx: number, endIdx: number,
+  bumps: TorsoBump[], torsoCenter: THREE.Vector3,
+): void {
+  for (let i = startIdx; i < endIdx; i++) {
+    const o = i * 3;
+    tmpVertV.set(positions[o], positions[o + 1], positions[o + 2]);
+    let dx = 0, dy = 0, dz = 0;
+    for (const b of bumps) {
+      // Side gate: smooth half-space cull at the torso centerline so the
+      // shoulder-R bump can't push the LEFT side of the torso outward.
+      // Smoothstep (not a hard `> 0`) avoids the visible crease at X=0
+      // where neighboring verts would otherwise straddle the gate edge.
+      const vxRel = tmpVertV.x - torsoCenter.x;
+      const vzRel = tmpVertV.z - torsoCenter.z;
+      const sideDot = vxRel * b.outwardDir.x + vzRel * b.outwardDir.z;
+      const sideGate = smoothstep(0, b.radius, sideDot);
+      if (sideGate <= 0) continue;
+      // Radial falloff: 3D distance to the bump anchor.
+      const ax = tmpVertV.x - b.anchor.x;
+      const ay = tmpVertV.y - b.anchor.y;
+      const az = tmpVertV.z - b.anchor.z;
+      const d = Math.sqrt(ax * ax + ay * ay + az * az);
+      const f = cosineFalloff(d, b.radius);
+      if (f <= 0) continue;
+      // Upper Y-clamp: keeps the shoulder bump out of neck-blend territory.
+      const yGate = 1 - smoothstep(b.yClampStart, b.yClampEnd, tmpVertV.y);
+      const w = b.height * f * sideGate * yGate;
+      dx += b.outwardDir.x * w;
+      dz += b.outwardDir.z * w;
+    }
+    positions[o] += dx;
+    positions[o + 1] += dy;
+    positions[o + 2] += dz;
+  }
+}
+
 // Skin contributions per vertex: [boneIdx, weight] pairs. Three.js takes 4 of
 // these per vert; we never use more than 2.
 type SkinContrib = Array<[number, number]>;
@@ -363,6 +470,7 @@ export function buildRagdollSkinnedMesh(
   // Torso: full sweep. Top NECK_BLEND_FRAC slice blends toward the head bone
   // so the head's motion gives the torso top a soft flex instead of a hard
   // swivel — see SHOULDER/HIP blends below for the same trick at the limbs.
+  const torsoVertStart = positions.length / 3;
   emitSegment(
     positions, skinIdx, skinW, indices, Mt,
     rest.torso, BONE_IDX.torso,
@@ -376,6 +484,75 @@ export function buildRagdollSkinnedMesh(
       extension: null,
     },
   );
+  const torsoVertEnd = positions.length / 3;
+
+  // Procedural shoulder/hip bumps on the torso shell. Without these, the
+  // closed rotationally-symmetric torso tube and the closed limb tubes meet
+  // at a visible cross-section ring (the "baby doll snap-in" look). The
+  // bumps deform the torso silhouette outward at each anchor so the limb
+  // grows out of a soft bulge instead.
+  //
+  // Heights are derived per-build so torso/limb spline edits stay coherent
+  // with the bumps. Each bump's target outward radius at its anchor Y is
+  // `anchorLateralX + limbRadius + margin`. The bump needs to add the
+  // difference between that target and the torso's current silhouette at
+  // that height.
+  const torsoFront = proportions.torsoFrontProfile;
+  const shoulderTargetX = proportions.shoulderOffsetX + proportions.armUpper.radius;
+  const hipTargetX = proportions.hipOffsetX + proportions.thigh.radius;
+  const shoulderBumpH = Math.max(
+    0,
+    shoulderTargetX - torsoXRadiusAt(torsoFront, proportions.shoulderOffsetY) + BUMP_HEIGHT_MARGIN,
+  );
+  const hipBumpH = Math.max(
+    0,
+    hipTargetX - torsoXRadiusAt(torsoFront, proportions.hipOffsetY) + BUMP_HEIGHT_MARGIN,
+  );
+
+  // Neck-blend zone clamp for shoulder bumps. NECK_BLEND_FRAC of the torso's
+  // half-range from the top is head-weighted; displacing those verts would
+  // make the shoulder bump pop when the head rotates. The clamp fades the
+  // bump to zero before it reaches the head-weighted region.
+  const torsoYTop = torsoFront[0][1];
+  const torsoYBot = torsoFront[torsoFront.length - 1][1];
+  const torsoHalfRange = (torsoYTop - torsoYBot) / 2;
+  const neckBlendStartLocal = torsoYTop - NECK_BLEND_FRAC * torsoHalfRange;
+  // Convert to world Y (torso bone has identity rotation by construction).
+  const neckBlendStartWorld = rest.torso.position.y + neckBlendStartLocal;
+  const shoulderYClampStart = neckBlendStartWorld - SHOULDER_BUMP_RADIUS * 0.3;
+  const shoulderYClampEnd = neckBlendStartWorld;
+  // Hip bumps don't approach head territory — disable the clamp by setting
+  // its window above any vert in the torso.
+  const yGateOff = rest.torso.position.y + torsoYTop + 1;
+
+  const bumps: TorsoBump[] = [];
+  for (const side of [-1, 1] as const) {
+    bumps.push({
+      anchor: new THREE.Vector3(
+        rest.torso.position.x + side * proportions.shoulderOffsetX,
+        rest.torso.position.y + proportions.shoulderOffsetY,
+        rest.torso.position.z,
+      ),
+      outwardDir: new THREE.Vector3(side, 0, 0),
+      height: shoulderBumpH,
+      radius: SHOULDER_BUMP_RADIUS,
+      yClampStart: shoulderYClampStart,
+      yClampEnd: shoulderYClampEnd,
+    });
+    bumps.push({
+      anchor: new THREE.Vector3(
+        rest.torso.position.x + side * proportions.hipOffsetX,
+        rest.torso.position.y + proportions.hipOffsetY,
+        rest.torso.position.z,
+      ),
+      outwardDir: new THREE.Vector3(side, 0, 0),
+      height: hipBumpH,
+      radius: HIP_BUMP_RADIUS,
+      yClampStart: yGateOff,
+      yClampEnd: yGateOff + 1,
+    });
+  }
+  displaceTorsoVerts(positions, torsoVertStart, torsoVertEnd, bumps, rest.torso.position);
 
   // Limb segments. Upper segments (armUpper, thigh) attach to the torso at
   // the top: they get a small upward extension into the torso silhouette
