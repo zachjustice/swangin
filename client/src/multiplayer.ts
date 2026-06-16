@@ -42,7 +42,6 @@ export interface MultiplayerOptions {
   userId: string;
   name: string;
   color: number;
-  onPeerCountChange?: (count: number) => void;
 }
 
 const tmpQA = new THREE.Quaternion();
@@ -81,10 +80,6 @@ export class Multiplayer {
     // Relative URL — Discord URL mapping /colyseus → server; Vite dev proxy
     // does the same standalone.
     this.client = new Colyseus.Client('/colyseus');
-  }
-
-  get peerCount(): number {
-    return this.peers.size;
   }
 
   // Seconds since the room was created, derived from the server-broadcast
@@ -182,7 +177,6 @@ export class Multiplayer {
       this.opts.spawnHint,
     );
     this.peers.set(sessionId, { state, ragdoll, buffer: [] });
-    this.opts.onPeerCountChange?.(this.peers.size);
   }
 
   private removePeer(sessionId: string): void {
@@ -190,7 +184,6 @@ export class Multiplayer {
     if (!peer) return;
     peer.ragdoll.dispose();
     this.peers.delete(sessionId);
-    this.opts.onPeerCountChange?.(this.peers.size);
   }
 }
 

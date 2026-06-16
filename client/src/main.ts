@@ -21,12 +21,6 @@ const MAX_SUBSTEPS = 5;
 
 const RESPAWN_Y = -15;
 const WORLD_HALF = 30;
-const SLACK_MIN = 0.85;
-const SLACK_MAX = 1.6;
-const SLACK_STEP = 0.05;
-const MOTOR_STEP = 0.1;
-const MOTOR_MIN = 0;
-const MOTOR_MAX = 3.0;
 const POSE_SEND_HZ = 20;
 
 const prompt = document.getElementById('prompt') as HTMLDivElement;

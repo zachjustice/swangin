@@ -24,13 +24,9 @@ interface JointPD {
 }
 
 export class RagdollMotors {
-  // Toggleable from main.ts (M key) for A/B comparison. When false, all
-  // assists are skipped — pure passive ragdoll. On by default: PD return-
-  // to-pose is the core of the "organic cartoony swing" target.
-  enabled = true;
   // Scales the torso righting torque, the grapple reach impulse, and every
   // per-joint PD.
-  globalMultiplier = 0.7;
+  private readonly globalMultiplier = 0.7;
   // Set by the host each substep: where the grapple is anchored, or null.
   grappleAnchor: THREE.Vector3 | null = null;
 
@@ -78,7 +74,6 @@ export class RagdollMotors {
 
   // Call this each physics substep, BEFORE world.step().
   update(dt: number): void {
-    if (!this.enabled) return;
     const g = this.globalMultiplier;
 
     if (this.rightingEnabled) {

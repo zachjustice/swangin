@@ -6,11 +6,9 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import { GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH } from './constants.ts';
 
 // Rigid fixed-length grapple: a rope joint between the hand and a one-off fixed
-// body parked at the surface hit point. Rope acts rigid when taut, so a slack
-// factor of 1.0 starts taut (full pendulum). >1.0 leaves some give.
+// body parked at the surface hit point.
 
 export class Grapple {
-  slackFactor = 1.0;
 
   private joint: RAPIER.ImpulseJoint | null = null;
   private anchorBody: RAPIER.RigidBody | null = null;
@@ -60,7 +58,7 @@ export class Grapple {
     this.release();
 
     this.handWorldPos(this.tmpHandWorld);
-    const length = this.tmpHandWorld.distanceTo(anchorWorld) * this.slackFactor;
+    const length = this.tmpHandWorld.distanceTo(anchorWorld);
 
     this.anchorBody = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(anchorWorld.x, anchorWorld.y, anchorWorld.z),

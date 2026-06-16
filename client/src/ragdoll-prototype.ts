@@ -936,7 +936,6 @@ async function initSimulator() {
   );
   grapple.fire(anchorPos);
   ragdoll.motors.grappleAnchor = anchorPos.clone();
-  ragdoll.motors.enabled = true;
 
   simulatorState = {
     world,
@@ -1055,13 +1054,6 @@ function buildSimulatorPanel() {
   resetBtn.textContent = 'Reset';
   resetBtn.onclick = () => respawnSimulator();
 
-  const motorsBtn = document.createElement('button');
-  motorsBtn.textContent = motors.enabled ? 'Motors: ON' : 'Motors: OFF';
-  motorsBtn.onclick = () => {
-    motors.enabled = !motors.enabled;
-    motorsBtn.textContent = motors.enabled ? 'Motors: ON' : 'Motors: OFF';
-  };
-
   const copyBtn = document.createElement('button');
   copyBtn.textContent = 'Copy Physics JSON';
   copyBtn.onclick = async () => {
@@ -1077,7 +1069,7 @@ function buildSimulatorPanel() {
     }
   };
 
-  actions.append(resetBtn, motorsBtn, copyBtn);
+  actions.append(resetBtn, copyBtn);
   sec.append(actions);
 }
 

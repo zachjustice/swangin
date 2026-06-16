@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import RAPIER, { RayColliderHit } from '@dimforge/rapier3d-compat';
+import RAPIER from '@dimforge/rapier3d-compat';
 import { CUBE_SIZE } from './world.ts';
 import { ALL_RAGDOLL_BITS } from './ragdoll-proportions.ts';
 
