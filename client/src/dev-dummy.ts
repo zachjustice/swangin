@@ -27,6 +27,7 @@ export class DevDummy implements PeerSpeedInfo {
   readonly ragdoll: RemoteRagdoll;
   readonly lastSpeed = 0;
   readonly lastVel = { x: 0, y: 0, z: 0 };
+  get torso(): RAPIER.RigidBody { return this.ragdoll.torso; }
   private readonly line: Line2;
   private readonly attachPoint: THREE.Vector3;
   private readonly hangPoint: THREE.Vector3;
@@ -76,7 +77,7 @@ export class DevDummy implements PeerSpeedInfo {
   // hook. Idempotent during the respawn window.
   onHit(confetti: Confetti): void {
     if (this.respawnAt > 0) return;
-    const t = this.ragdoll.parts[0].body.translation(); // torso = first
+    const t = this.ragdoll.torso.translation();
     confetti.burst(t.x, t.y, t.z, this.color);
     this.ragdoll.setVisible(false);
     this.line.visible = false;

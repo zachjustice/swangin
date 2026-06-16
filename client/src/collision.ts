@@ -4,6 +4,7 @@ import {
   COLLISION_SPEED_THRESHOLD,
   COLLISION_TIE_EPSILON,
   LOCAL_PEER_COOLDOWN_MS,
+  KNOCKBACK_GAIN,
 } from './constants.ts';
 
 // Cross-player collision detection.
@@ -51,11 +52,14 @@ export function clearPeerCooldown(sessionId: string): void {
 export interface PeerSpeedInfo {
   lastSpeed: number | null;
   lastVel: { x: number; y: number; z: number } | null;
+  torso: RAPIER.RigidBody;
 }
 
 export interface CollisionContext {
   localRagdoll: {
     smoothedSpeed: number;
+    torso: RAPIER.RigidBody;
+    vel: { x: number; y: number; z: number };
   };
   lifecycle: {
     canBeKilled(): boolean;
@@ -113,6 +117,40 @@ export function drain(eventQueue: RAPIER.EventQueue, ctx: CollisionContext): voi
     }
 
     const peerSpeed = peer.lastSpeed;
+
+    // Local-only knockback: push self away from peer along the contact normal,
+    // scaled by closing speed × KNOCKBACK_GAIN × torso mass. Both clients do
+    // this independently for their own local body — the streamed pose carries
+    // the result to the other side after INTERP_DELAY_MS. No double-counting,
+    // and Rapier's natural contact against a kinematic remote is a wall-bump,
+    // so the manual impulse is what makes the hit feel like momentum exchange.
+    // Bail on zero distance (coincident torsos); no floor on closingSpeed, so
+    // glancing brushes get nothing from this and rely on Rapier's contact.
+    const localPos = ctx.localRagdoll.torso.translation();
+    const peerPos = peer.torso.translation();
+    const ndx = localPos.x - peerPos.x;
+    const ndy = localPos.y - peerPos.y;
+    const ndz = localPos.z - peerPos.z;
+    const nlen = Math.hypot(ndx, ndy, ndz);
+    if (nlen >= 1e-5) {
+      const dx = ndx / nlen;
+      const dy = ndy / nlen;
+      const dz = ndz / nlen;
+      const closingSpeed = Math.max(
+        0,
+        (peer.lastVel.x - ctx.localRagdoll.vel.x) * dx +
+        (peer.lastVel.y - ctx.localRagdoll.vel.y) * dy +
+        (peer.lastVel.z - ctx.localRagdoll.vel.z) * dz,
+      );
+      if (closingSpeed > 0) {
+        const mag = closingSpeed * KNOCKBACK_GAIN * ctx.localRagdoll.torso.mass();
+        ctx.localRagdoll.torso.applyImpulse(
+          { x: dx * mag, y: dy * mag, z: dz * mag },
+          true,
+        );
+      }
+    }
+
     if (Math.max(selfSpeed, peerSpeed) < COLLISION_SPEED_THRESHOLD) {
       // Neither side is moving fast enough — just a slow bump.
       lastInteractionAt.set(remoteSession, now);

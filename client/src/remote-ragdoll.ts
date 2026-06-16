@@ -17,6 +17,8 @@ import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 import { POSE_FLOATS } from './pose-codec.ts';
 import { registerCollider, unregisterCollider } from './collision.ts';
 import { createKillCounter, type KillCounter } from './kill-counter.ts';
+import { SpeedTrail } from './speed-trail.ts';
+import { TRAIL_ANCHOR_PARTS } from './constants.ts';
 
 // Remote ragdoll: 10 kinematic-position bodies (no joints, no motors). Pose is
 // dictated by interpolated network samples each frame. Kinematic so C11 can
@@ -31,6 +33,7 @@ export interface RemoteRagdoll {
   parts: RemotePart[];
   // Bodies in POSE_PART_ORDER — what applyPose() expects.
   poseBodies: RAPIER.RigidBody[];
+  torso: RAPIER.RigidBody;
   grappleLine: Line2;
   label: CSS2DObject;
   mesh: THREE.SkinnedMesh;
@@ -47,6 +50,8 @@ export interface RemoteRagdoll {
   ): void;
   setVisible(v: boolean): void;
   setKillCount(n: number): void;
+  // Speed-trail visual driven by `lastSpeed`. Tick from the render loop.
+  trail: SpeedTrail;
   dispose(): void;
 }
 
@@ -123,6 +128,16 @@ export function createRemoteRagdoll(
 
   const killCounter: KillCounter = createKillCounter();
   skinned.bones.torso.add(killCounter.sprite);
+
+  // Speed-trail driven by the most-recent broadcast speed (already EMA
+  // smoothed on the sender). lastSpeed is null until the first pose arrives —
+  // SpeedTrail treats that as 0, which keeps the line group hidden.
+  const trailBodies = TRAIL_ANCHOR_PARTS.map((n) => {
+    const part = partsByName[n];
+    if (!part) throw new Error(`[remote-ragdoll] missing trail anchor part: ${n}`);
+    return part.body;
+  });
+  const trail = new SpeedTrail(scene, trailBodies, () => state.lastSpeed ?? 0);
 
   // Grapple line — remote endpoint comes from grap message. Matches local
   // player's grapple rendering: world-unit thickness for perspective taper,
@@ -218,6 +233,7 @@ export function createRemoteRagdoll(
 
   function setVisible(v: boolean): void {
     skinned.mesh.visible = v;
+    trail.setVisible(v);
   }
 
   function setKillCount(n: number): void {
@@ -228,6 +244,7 @@ export function createRemoteRagdoll(
     for (const h of colliderHandles) unregisterCollider(h);
     for (const p of parts) world.removeRigidBody(p.body);
     killCounter.dispose();
+    trail.dispose();
     scene.remove(skinned.mesh);
     skinned.dispose();
     scene.remove(grappleLine);
@@ -241,6 +258,7 @@ export function createRemoteRagdoll(
   return {
     parts,
     poseBodies: parts.map((p) => p.body),
+    torso: parts[0].body,
     grappleLine,
     label,
     mesh: skinned.mesh,
@@ -249,6 +267,7 @@ export function createRemoteRagdoll(
     applyPose,
     setVisible,
     setKillCount,
+    trail,
     dispose,
   };
 }

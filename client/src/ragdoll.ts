@@ -23,7 +23,8 @@ import {
 import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 import { registerCollider, unregisterCollider } from './collision.ts';
 import { createKillCounter, type KillCounter } from './kill-counter.ts';
-import { COLLISION_SPEED_EMA_ALPHA } from './constants.ts';
+import { SpeedTrail } from './speed-trail.ts';
+import { COLLISION_SPEED_EMA_ALPHA, TRAIL_ANCHOR_PARTS } from './constants.ts';
 
 // 10-body humanoid skeleton, joined entirely by spherical impulse joints.
 // Cuboid limbs (flat-face contact at each joint brakes long-axis twist) +
@@ -71,6 +72,9 @@ export interface Ragdoll {
   setVisible(v: boolean): void;
   setKillCount(n: number): void;
   linvel(): { x: number; y: number; z: number };
+  // Pale-white "air lines" trailing limb extremities above kill speed.
+  // Tick from the render loop with seconds-since-last-frame.
+  trail: SpeedTrail;
   dispose(): void;
 }
 
@@ -270,6 +274,14 @@ export function createRagdoll(
   // collision threshold check and broadcast on the wire.
   const speedState = { value: 0 };
 
+  // Speed-trail visual — pale "air lines" from extremities when moving fast.
+  const trailBodies = TRAIL_ANCHOR_PARTS.map((n) => {
+    const part = parts.find((p) => p.name === n);
+    if (!part) throw new Error(`[ragdoll] missing trail anchor part: ${n}`);
+    return part.body;
+  });
+  const trail = new SpeedTrail(scene, trailBodies, () => speedState.value);
+
   function sync() {
     for (const part of parts) {
       const t = part.body.translation();
@@ -291,6 +303,7 @@ export function createRagdoll(
       part.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     }
     speedState.value = 0;
+    trail.clearAll();
     sync();
   }
 
@@ -304,6 +317,7 @@ export function createRagdoll(
 
   function setVisible(v: boolean) {
     skinned.mesh.visible = v;
+    trail.setVisible(v);
   }
 
   function setKillCount(n: number) {
@@ -350,6 +364,7 @@ export function createRagdoll(
   function dispose() {
     for (const h of colliderHandles) unregisterCollider(h);
     killCounter.dispose();
+    trail.dispose();
     scene.remove(skinned.mesh);
     skinned.dispose();
     mat.dispose();
@@ -371,6 +386,7 @@ export function createRagdoll(
     setVisible,
     setKillCount,
     linvel,
+    trail,
     dispose,
   };
 }

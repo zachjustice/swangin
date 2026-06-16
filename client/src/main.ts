@@ -197,13 +197,24 @@ function applyMovementImpulse() {
   ragdoll.torso.applyImpulse({ x: dx * MOVE_IMPULSE, y: 0, z: dz * MOVE_IMPULSE }, true);
 }
 
+// Local torso linvel sampled BEFORE world.step() each substep — used by
+// collision.drain to compute closing speed along the contact normal. After
+// the step Rapier has already absorbed some of the impact, so the post-step
+// vector systematically under-estimates the hit; sampling pre-step keeps the
+// knockback proportional to the actual approach.
+const preStepLocalVel = { x: 0, y: 0, z: 0 };
+
 // Collision context: rebuilt each drain call so multiplayer / lifecycle stay
 // fresh. cheap — just object literal allocation. The dev dummy is merged
 // into getPeer's lookup so the collision rule sees it the same way it sees
 // a real Colyseus peer.
 function collisionCtx(): collision.CollisionContext {
   return {
-    localRagdoll: ragdoll,
+    localRagdoll: {
+      smoothedSpeed: ragdoll.smoothedSpeed,
+      torso: ragdoll.torso,
+      vel: preStepLocalVel,
+    },
     lifecycle,
     getPeer: (sid) => {
       const real = multiplayer?.getPeer(sid);
@@ -229,6 +240,8 @@ function tick() {
     ragdoll.motors.grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
     ragdoll.motors.update(FIXED_DT);
     applyMovementImpulse();
+    const v = ragdoll.torso.linvel();
+    preStepLocalVel.x = v.x; preStepLocalVel.y = v.y; preStepLocalVel.z = v.z;
     world.step(eventQueue);
     collision.drain(eventQueue, collisionCtx());
     ragdoll.updateSpeed(FIXED_DT);
@@ -245,7 +258,8 @@ function tick() {
   grapple.update();
   tpCamera.update(frameTime);
   reticle.update(camera);
-  multiplayer?.update();
+  ragdoll.trail.update(frameTime);
+  multiplayer?.update(frameTime);
   devDummy?.update(performance.now());
   if (devSpeedHud) devSpeedHud.textContent = `${ragdoll.smoothedSpeed.toFixed(1)} m/s`;
   orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);

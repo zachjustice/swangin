@@ -49,6 +49,7 @@ const REMOTE_MESH_HIDE_FALLBACK_MS = 2000;
 export interface Peer extends PeerSpeedInfo {
   state: PlayerState;
   ragdoll: RemoteRagdoll;
+  torso: RAPIER.RigidBody;
   buffer: PoseEnvelope[];
   // `setKillCount` proxy so collision code never reaches into the schema —
   // the Multiplayer instance bridges Colyseus diffs to ragdoll setters.
@@ -201,10 +202,13 @@ export class Multiplayer {
 
   // Call once per render frame. Samples each peer's buffer at now - INTERP_DELAY_MS
   // and applies the interpolated pose to its kinematic ragdoll.
-  update(): void {
+  update(dtSeconds = 1 / 60): void {
     const now = performance.now();
     const renderTime = now - INTERP_DELAY_MS;
     for (const [sid, peer] of this.peers) {
+      // Trail ticks even if no pose arrived this frame so it fades cleanly
+      // after a peer stops sending.
+      peer.ragdoll.trail.update(dtSeconds);
       const buf = peer.buffer;
       if (buf.length === 0) continue;
       let appliedFresh = false;
@@ -265,7 +269,10 @@ export class Multiplayer {
       this.opts.spawnHint,
     );
     this.peers.set(sessionId, {
-      state, ragdoll, buffer: [],
+      state,
+      ragdoll,
+      torso: ragdoll.torso,
+      buffer: [],
       get lastSpeed() { return ragdoll.lastSpeed; },
       get lastVel() { return ragdoll.lastVel; },
     });
