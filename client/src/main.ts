@@ -25,8 +25,8 @@ const SKY = 0x6b9bcc;
 const FIXED_DT = 1 / 60;
 const MAX_SUBSTEPS = 5;
 
-const RESPAWN_Y = -15;
-const WORLD_HALF = 30;
+const RESPAWN_Y = -50;
+const WORLD_HALF = 50;
 const POSE_SEND_HZ = 20;
 
 const prompt = document.getElementById('prompt') as HTMLDivElement;
@@ -48,7 +48,7 @@ const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
-renderer.toneMappingExposure = 0.85;
+renderer.toneMappingExposure = 0.75;
 document.body.appendChild(renderer.domElement);
 
 const cloudLayer = createCloudLayer(scene);
@@ -65,7 +65,7 @@ document.body.appendChild(labelRenderer.domElement);
 
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.5));
 const dir = new THREE.DirectionalLight(0xfff4e0, 0.6);
-dir.position.set(20, 40, 10);
+dir.position.set(20, 18, 10);
 scene.add(dir);
 
 // EffectComposer pipeline: scene render → UnrealBloomPass. Composer owns final
@@ -79,7 +79,7 @@ composer.addPass(new RenderPass(scene, camera));
 // the orb fragment shader's 1.6× multiplier and rim boost are what bleed.
 const bloomPass = new UnrealBloomPass(
   new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.45, 0.4, 0.95,
+  0.45, 0.4, 0.99,
 );
 composer.addPass(bloomPass);
 
@@ -119,11 +119,24 @@ const confetti = new Confetti(scene);
 // Hang length is tuned so the dummy's feet stay clear of the next-layer cube
 // tops; adjust if proportions change.
 let devDummy: DevDummy | null = null;
+let devSpeedHud: HTMLDivElement | null = null;
 if (import.meta.env.DEV) {
   const halfExtent = CUBE_SIZE / 2;
   const attach = new THREE.Vector3(0, LATTICE_TOP_Y - halfExtent, 0);
   devDummy = new DevDummy(scene, world, attach, 2.6, 0xff3366, 'Dummy');
   console.log('[dev] dummy hung at', attach.toArray());
+
+  devSpeedHud = document.createElement('div');
+  devSpeedHud.style.cssText = [
+    'position: fixed',
+    'top: 8px',
+    'right: 12px',
+    'color: #000',
+    'font: 700 16px ui-monospace, SFMono-Regular, Menlo, monospace',
+    'pointer-events: none',
+    'z-index: 10',
+  ].join(';');
+  document.body.appendChild(devSpeedHud);
 }
 
 // Multiplayer state — assigned after auth resolves below; tick() guards on null.
@@ -229,6 +242,7 @@ function tick() {
   reticle.update(camera);
   multiplayer?.update();
   devDummy?.update(performance.now());
+  if (devSpeedHud) devSpeedHud.textContent = `${ragdoll.smoothedSpeed.toFixed(1)} m/s`;
   orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);
   confetti.update(frameTime);
 

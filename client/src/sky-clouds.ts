@@ -70,7 +70,7 @@ const FRAG = /* glsl */`
     vec3 peak = vec3(0.92, 0.94, 0.96) * lit;
     vec3 base = vec3(0.78, 0.84, 0.92);
     vec3 color = mix(base, peak, cloud);
-    gl_FragColor = vec4(color, cloud * 0.40);
+    gl_FragColor = vec4(color, cloud * 0.28);
   }
 `;
 
