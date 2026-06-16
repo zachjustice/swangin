@@ -66,10 +66,10 @@ document.body.appendChild(labelRenderer.domElement);
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.5));
 
 // ambient lighting from everywhere
-const light = new THREE.AmbientLight(0xfff4e0, .6); // soft white light
+const light = new THREE.AmbientLight(0xfff4e0, .6);
 scene.add(light);
 // a tasteful amount of shadows
-const dir = new THREE.DirectionalLight(0xfff4e0, 0.2);
+const dir = new THREE.DirectionalLight(0xfff4e0, 0.3);
 dir.position.set(0, 18, 0);
 scene.add(dir);
 
@@ -128,7 +128,7 @@ let devSpeedHud: HTMLDivElement | null = null;
 if (import.meta.env.DEV) {
   const halfExtent = CUBE_SIZE / 2;
   const attach = new THREE.Vector3(0, LATTICE_TOP_Y - halfExtent, 0);
-  devDummy = new DevDummy(scene, world, attach, 2.6, 0xff3366, 'Dummy');
+  devDummy = new DevDummy(scene, world, attach, 6, 0xff3366, 'Dummy');
   console.log('[dev] dummy hung at', attach.toArray());
 
   devSpeedHud = document.createElement('div');
