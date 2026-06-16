@@ -13,6 +13,7 @@ import { Grapple } from './grapple.ts';
 import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
 import { createOrb } from './orb.ts';
+import { createCloudLayer } from './sky-clouds.ts';
 import { MOVE_IMPULSE, MOVE_MAX_SPEED } from './constants.ts';
 
 const SKY = 0x3a5a8a;
@@ -45,6 +46,8 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 document.body.appendChild(renderer.domElement);
 
+const cloudLayer = createCloudLayer(scene);
+
 // CSS2D layer for name labels — positioned absolutely over the WebGL canvas,
 // transparent and pointer-event-disabled so it doesn't intercept clicks.
 const labelRenderer = new CSS2DRenderer();
@@ -55,7 +58,7 @@ labelRenderer.domElement.style.left = '0';
 labelRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(labelRenderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.9));
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 1.4));
 const dir = new THREE.DirectionalLight(0xfff4e0, 1.5);
 dir.position.set(20, 40, 10);
 scene.add(dir);
@@ -156,6 +159,8 @@ function tick() {
     steps++;
   }
   if (steps === MAX_SUBSTEPS) accumulator = 0;
+
+  cloudLayer.update(now);
 
   checkRespawn();
   ragdoll.sync();
