@@ -41,6 +41,9 @@ interface ConfettiBroadcast {
 // even with one missed packet. 20Hz send cadence = ~50ms between samples.
 const INTERP_DELAY_MS = 100;
 const BUFFER_MAX = 12; // 600ms — enough headroom for short stalls.
+// How long to keep pending pose envelopes for a sessionId that never gets an
+// onAdd (e.g. a message for a peer that already left). Keeps the map bounded.
+const PENDING_TTL_MS = 5000;
 // Time after a peer confetti broadcast to keep their mesh hidden. The next
 // pose tick from the respawned peer naturally re-shows it; this is a safety
 // net in case that tick is delayed.
@@ -97,6 +100,9 @@ export class Multiplayer {
   private mySessionId: string | null = null;
   private readonly peers = new Map<string, Peer>();
   private readonly remoteHideUntil = new Map<string, number>();
+  // Pose envelopes that arrived before the sender's onAdd. Drained into
+  // peer.buffer when addPeer runs; stale entries evicted after PENDING_TTL_MS.
+  private readonly pending = new Map<string, PoseEnvelope[]>();
   private readonly outPose: number[] = new Array(POSE_FLOATS);
   // Fallback to local boot time if state hasn't synced yet — keeps the orb
   // animating from frame 1 instead of staring at a flat sphere.
@@ -168,9 +174,15 @@ export class Multiplayer {
     });
 
     room.onMessage<PoseEnvelope>('pose', (env) => {
-      const peer = this.peers.get(env.s);
-      if (!peer) return;
       env.t = performance.now();
+      const peer = this.peers.get(env.s);
+      if (!peer) {
+        let bucket = this.pending.get(env.s);
+        if (!bucket) { bucket = []; this.pending.set(env.s, bucket); }
+        bucket.push(env);
+        if (bucket.length > BUFFER_MAX) bucket.shift();
+        return;
+      }
       peer.buffer.push(env);
       if (peer.buffer.length > BUFFER_MAX) peer.buffer.shift();
     });
@@ -205,6 +217,13 @@ export class Multiplayer {
   update(dtSeconds = 1 / 60): void {
     const now = performance.now();
     const renderTime = now - INTERP_DELAY_MS;
+    // Evict pending buckets whose last envelope is older than PENDING_TTL_MS
+    // so sessionIds that never get an onAdd don't accumulate indefinitely.
+    for (const [sid, bucket] of this.pending) {
+      if (bucket.length > 0 && now - bucket[bucket.length - 1].t > PENDING_TTL_MS) {
+        this.pending.delete(sid);
+      }
+    }
     for (const [sid, peer] of this.peers) {
       // Trail ticks even if no pose arrived this frame so it fades cleanly
       // after a peer stops sending.
@@ -268,17 +287,20 @@ export class Multiplayer {
       state.name,
       this.opts.spawnHint,
     );
+    const bucket = this.pending.get(sessionId) ?? [];
+    this.pending.delete(sessionId);
     this.peers.set(sessionId, {
       state,
       ragdoll,
       torso: ragdoll.torso,
-      buffer: [],
+      buffer: bucket,
       get lastSpeed() { return ragdoll.lastSpeed; },
       get lastVel() { return ragdoll.lastVel; },
     });
   }
 
   private removePeer(sessionId: string): void {
+    this.pending.delete(sessionId);
     const peer = this.peers.get(sessionId);
     if (!peer) return;
     peer.ragdoll.dispose();
