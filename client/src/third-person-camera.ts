@@ -12,6 +12,7 @@ export class ThirdPersonCamera {
   mouseSensitivity = 0.0025;
 
   private readonly currentTarget = new THREE.Vector3();
+  private readonly tmpDesired = new THREE.Vector3();
   private locked = false;
   private readonly onMouseMove: (e: MouseEvent) => void;
   private readonly onPointerLockChange: () => void;
@@ -19,7 +20,7 @@ export class ThirdPersonCamera {
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
     private readonly domElement: HTMLElement,
-    private readonly target: RAPIER.RigidBody,
+    target: RAPIER.RigidBody,
   ) {
     const t = target.translation();
     this.currentTarget.set(t.x, t.y + this.heightOffset, t.z);
@@ -52,11 +53,13 @@ export class ThirdPersonCamera {
     this.domElement.requestPointerLock();
   }
 
-  update(dt: number): void {
-    const t = this.target.translation();
-    const desired = new THREE.Vector3(t.x, t.y + this.heightOffset, t.z);
+  // `targetPos` is the interpolated world position to follow. main.ts feeds
+  // the fixed-step-alpha-interpolated torso translation so the camera doesn't
+  // re-introduce the substep aliasing the ragdoll interp eliminated.
+  update(dt: number, targetPos: THREE.Vector3): void {
+    this.tmpDesired.set(targetPos.x, targetPos.y + this.heightOffset, targetPos.z);
     const lerpAmt = 1 - Math.exp(-this.followStiffness * dt);
-    this.currentTarget.lerp(desired, lerpAmt);
+    this.currentTarget.lerp(this.tmpDesired, lerpAmt);
     this.placeCameraImmediate();
   }
 

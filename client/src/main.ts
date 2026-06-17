@@ -266,6 +266,10 @@ const SPIKE_MS = 33; // anything over ~2 vsync at 60Hz
 const __t = { grap: 0, phys: 0, sky: 0, scene: 0, mp: 0, fx: 0, render: 0, steps: 0 };
 function __mark() { return performance.now(); }
 
+// Scratch vector for the interpolated torso world position handed to the camera
+// each frame. Reused to avoid per-frame allocation.
+const __tmpInterpTorso = new THREE.Vector3();
+
 function tick() {
   const frameStartMs = performance.now();
   const now = frameStartMs / 1000;
@@ -305,6 +309,11 @@ function tick() {
     applyMovementImpulse();
     const v = ragdoll.torso.linvel();
     preStepLocalVel.x = v.x; preStepLocalVel.y = v.y; preStepLocalVel.z = v.z;
+    // Snapshot pre-step state for render interpolation. Must run immediately
+    // before world.step so prev = (state at start of this substep) and
+    // body.translation() after the loop = (state at end of last substep).
+    ragdoll.cachePrevForInterp();
+    if (grapple.isActive) grapple.cachePrevForInterp();
     world.step(eventQueue);
     ragdoll.clampBodySpeeds(MAX_RAGDOLL_BODY_SPEED);
     collision.drain(eventQueue, collisionCtx());
@@ -332,11 +341,16 @@ function tick() {
   }
   __t.phys = __mark() - __m; __t.steps = steps; __m = __mark();
 
+  // Fix-Your-Timestep render alpha: fraction of FIXED_DT past the last
+  // completed substep. Clamp to [0,1] — the MAX_SUBSTEPS bail-out resets
+  // accumulator to 0, so this normally stays in range, but guard anyway.
+  const alpha = Math.min(1, accumulator / FIXED_DT);
+
   cloudLayer.update(now);
 
   lifecycle.tick(performance.now());
   checkRespawn();
-  ragdoll.sync();
+  ragdoll.sync(alpha);
 
   // Orb passage detection — trigger sky cycle on entry
   {
@@ -365,8 +379,8 @@ function tick() {
 
   __t.sky = __mark() - __m; __m = __mark();
 
-  grapple.syncLine();
-  tpCamera.update(frameTime);
+  grapple.syncLine(alpha);
+  tpCamera.update(frameTime, ragdoll.getInterpolatedTranslation('torso', alpha, __tmpInterpTorso));
   reticle.update(camera);
   ragdoll.trail.update(frameTime);
   __t.scene = __mark() - __m; __m = __mark();

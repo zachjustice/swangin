@@ -1261,13 +1261,15 @@ function animateSimulator(now: number) {
   while (simulatorState.accumulator >= 1 / 60 && steps < 5) {
     ragdoll.motors.update(1 / 60);
     applyGrabForce(1 / 60);
+    ragdoll.cachePrevForInterp();
     world.step();
     simulatorState.accumulator -= 1 / 60;
     steps++;
   }
 
-  ragdoll.sync();
-  grapple.update();
+  const alpha = Math.min(1, simulatorState.accumulator / (1 / 60));
+  ragdoll.sync(alpha);
+  grapple.update(dt);
   updateKeyboardCamera(dt);
   controls.update();
   renderer.render(scene, camera);

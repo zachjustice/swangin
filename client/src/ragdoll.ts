@@ -46,6 +46,11 @@ interface Part {
   body: RAPIER.RigidBody;
   initialOffset: THREE.Vector3;
   initialRotation: THREE.Quaternion;
+  // Pre-step translation/rotation cached each substep so render can lerp
+  // between substep boundaries instead of sampling the post-step state raw.
+  // See cachePrevForInterp / sync(alpha) below.
+  prevT: { x: number; y: number; z: number };
+  prevR: { x: number; y: number; z: number; w: number };
 }
 
 export interface Ragdoll {
@@ -64,7 +69,15 @@ export interface Ragdoll {
   // both the local collision-rule check and the value shipped on the wire
   // for remote-side rule comparison.
   smoothedSpeed: number;
-  sync(): void;
+  // Snapshot current body translation/rotation into each part's prev cache.
+  // Call once per physics substep, immediately before world.step().
+  cachePrevForInterp(): void;
+  // Drive bones from a lerp(prev, current, alpha) where alpha is the
+  // leftover-accumulator fraction of FIXED_DT. Call once per render frame.
+  sync(alpha: number): void;
+  // Lerp helper for callers that need the interpolated world position of a
+  // single body (e.g. camera target). Writes into `out` and returns it.
+  getInterpolatedTranslation(name: PosePart, alpha: number, out: THREE.Vector3): THREE.Vector3;
   respawn(spawn: THREE.Vector3): void;
   updateSpeed(dt: number): void;
   setVisible(v: boolean): void;
@@ -134,6 +147,10 @@ export function createRagdoll(
       name, body,
       initialOffset: centerWorld.clone().sub(spawn),
       initialRotation: (initialRotation ?? new THREE.Quaternion()).clone(),
+      prevT: { x: centerWorld.x, y: centerWorld.y, z: centerWorld.z },
+      prevR: initialRotation
+        ? { x: initialRotation.x, y: initialRotation.y, z: initialRotation.z, w: initialRotation.w }
+        : { x: 0, y: 0, z: 0, w: 1 },
     };
     parts.push(part);
     return part;
@@ -284,15 +301,46 @@ export function createRagdoll(
   });
   const trail = new SpeedTrail(scene, trailBodies, () => speedState.value);
 
-  function sync() {
+  // Scratch quaternions reused across sync() calls to avoid per-frame allocation.
+  const scratchPrevQ = new THREE.Quaternion();
+  const scratchCurrQ = new THREE.Quaternion();
+
+  function cachePrevForInterp() {
+    for (const part of parts) {
+      const t = part.body.translation();
+      const r = part.body.rotation();
+      part.prevT.x = t.x; part.prevT.y = t.y; part.prevT.z = t.z;
+      part.prevR.x = r.x; part.prevR.y = r.y; part.prevR.z = r.z; part.prevR.w = r.w;
+    }
+  }
+
+  function sync(alpha: number) {
     for (const part of parts) {
       const t = part.body.translation();
       const r = part.body.rotation();
       const bone = skinned.bones[part.name];
-      bone.position.set(t.x, t.y, t.z);
-      bone.quaternion.set(r.x, r.y, r.z, r.w);
+      bone.position.set(
+        part.prevT.x + (t.x - part.prevT.x) * alpha,
+        part.prevT.y + (t.y - part.prevT.y) * alpha,
+        part.prevT.z + (t.z - part.prevT.z) * alpha,
+      );
+      scratchPrevQ.set(part.prevR.x, part.prevR.y, part.prevR.z, part.prevR.w);
+      scratchCurrQ.set(r.x, r.y, r.z, r.w);
+      scratchPrevQ.slerp(scratchCurrQ, alpha);
+      bone.quaternion.copy(scratchPrevQ);
       bone.updateMatrixWorld(true);
     }
+  }
+
+  function getInterpolatedTranslation(name: PosePart, alpha: number, out: THREE.Vector3): THREE.Vector3 {
+    const part = partsByName[name];
+    const t = part.body.translation();
+    out.set(
+      part.prevT.x + (t.x - part.prevT.x) * alpha,
+      part.prevT.y + (t.y - part.prevT.y) * alpha,
+      part.prevT.z + (t.z - part.prevT.z) * alpha,
+    );
+    return out;
   }
 
   function respawn(newSpawn: THREE.Vector3) {
@@ -306,7 +354,11 @@ export function createRagdoll(
     }
     speedState.value = 0;
     trail.clearAll();
-    sync();
+    // After respawn, prev would still be the pre-respawn pose — lerping from
+    // there would slide the body across the world. Re-cache so prev = current,
+    // then sync at any alpha (0 and 1 are identical when prev == current).
+    cachePrevForInterp();
+    sync(0);
   }
 
   function updateSpeed(_dt: number) {
@@ -342,7 +394,8 @@ export function createRagdoll(
     }
   }
 
-  sync();
+  cachePrevForInterp();
+  sync(0);
 
   // Active control:
   //   - Grapple reach impulse on the right forearm toward the anchor.
@@ -394,7 +447,9 @@ export function createRagdoll(
     material: mat,
     mesh: skinned.mesh,
     get smoothedSpeed() { return speedState.value; },
+    cachePrevForInterp,
     sync,
+    getInterpolatedTranslation,
     respawn,
     updateSpeed,
     setVisible,

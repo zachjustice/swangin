@@ -30,6 +30,12 @@ export class Grapple {
   private readonly lineGeom: LineGeometry;
   private readonly tmpHandWorld = new THREE.Vector3();
   private readonly tmpHandQuat = new THREE.Quaternion();
+  // Pre-step snapshots of the two endpoints for fixed-step render interpolation.
+  // Caching the resolved hand world point (translation + rotation * handLocal)
+  // avoids having to lerp translation and rotation separately on render.
+  private readonly prevAnchorT = { x: 0, y: 0, z: 0 };
+  private readonly prevHandWorld = new THREE.Vector3();
+  private hasPrev = false;
   private currentLength = 0;
   private jointLength = 0; // length the live joint was created with
   private mode: ReelMode = NO_REEL;
@@ -96,6 +102,7 @@ export class Grapple {
       this.anchorBody = null;
     }
     this.mode = NO_REEL;
+    this.hasPrev = false;
     this.line.visible = false;
   }
 
@@ -129,20 +136,38 @@ export class Grapple {
         this.jointLength = this.currentLength;
       }
     }
-
-    this.syncLine();
+    // Line geometry is synced in syncLine() from the main render loop with the
+    // fixed-step alpha — no need to update it here.
   }
 
-  // Update rope line geometry to match current hand and anchor positions.
-  // Call once per frame AFTER world.step() so endpoints track post-step bodies.
-  syncLine(): void {
+  // Snapshot current endpoint positions for fixed-step render interpolation.
+  // Call once per physics substep, immediately before world.step().
+  cachePrevForInterp(): void {
+    if (!this.anchorBody) return;
+    const a = this.anchorBody.translation();
+    this.prevAnchorT.x = a.x;
+    this.prevAnchorT.y = a.y;
+    this.prevAnchorT.z = a.z;
+    this.handWorldPos(this.prevHandWorld);
+    this.hasPrev = true;
+  }
+
+  // Update rope line geometry. `alpha` is the leftover-accumulator fraction of
+  // FIXED_DT; endpoints lerp from the pre-step snapshot to the current
+  // post-step position. Falls back to current-only if no prev exists yet
+  // (e.g. the first frame after fire()).
+  syncLine(alpha: number): void {
     if (!this.anchorBody) return;
     this.handWorldPos(this.tmpHandWorld);
     const a = this.anchorBody.translation();
-    this.lineGeom.setPositions([
-      this.tmpHandWorld.x, this.tmpHandWorld.y, this.tmpHandWorld.z,
-      a.x, a.y, a.z,
-    ]);
+    const useAlpha = this.hasPrev ? alpha : 1;
+    const hx = this.prevHandWorld.x + (this.tmpHandWorld.x - this.prevHandWorld.x) * useAlpha;
+    const hy = this.prevHandWorld.y + (this.tmpHandWorld.y - this.prevHandWorld.y) * useAlpha;
+    const hz = this.prevHandWorld.z + (this.tmpHandWorld.z - this.prevHandWorld.z) * useAlpha;
+    const ax = this.prevAnchorT.x + (a.x - this.prevAnchorT.x) * useAlpha;
+    const ay = this.prevAnchorT.y + (a.y - this.prevAnchorT.y) * useAlpha;
+    const az = this.prevAnchorT.z + (a.z - this.prevAnchorT.z) * useAlpha;
+    this.lineGeom.setPositions([hx, hy, hz, ax, ay, az]);
   }
 
   private createJoint(length: number): RAPIER.ImpulseJoint {
