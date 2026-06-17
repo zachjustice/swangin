@@ -19,6 +19,7 @@ import { Collision, type CollisionContext } from './collision.ts';
 import { Confetti } from './confetti.ts';
 import { PlayerLifecycle } from './lifecycle.ts';
 import { DevDummy } from './dev-dummy.ts';
+import { PerfHud } from './perf-hud.ts';
 import { LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
 
 let skyIndex = 4;
@@ -150,7 +151,9 @@ const confetti = new Confetti(scene);
 // tops; adjust if proportions change.
 let devDummy: DevDummy | null = null;
 let devSpeedHud: HTMLDivElement | null = null;
+let perfHud: PerfHud | null = null;
 if (import.meta.env.DEV) {
+  perfHud = new PerfHud();
   const halfExtent = CUBE_SIZE / 2;
   const attach = new THREE.Vector3(0, LATTICE_TOP_Y - halfExtent, 0);
   devDummy = new DevDummy(scene, world, collision, attach, 6, 0xff3366, 'Dummy');
@@ -286,6 +289,9 @@ function tick() {
   const now = performance.now() / 1000;
   let frameTime = now - last;
   last = now;
+  // Sample BEFORE the 0.25s clamp so the HUD reports real stalls instead of
+  // a flat 250ms ceiling whenever the tab was backgrounded or a step spiked.
+  perfHud?.sample(frameTime * 1000);
   if (frameTime > 0.25) frameTime = 0.25;
   accumulator += frameTime;
 
