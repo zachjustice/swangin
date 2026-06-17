@@ -1,5 +1,6 @@
 import { Room, Client } from 'colyseus';
 import { Player, SwanginState } from './schema.ts';
+import { TokenBucket } from './token-bucket.ts';
 
 interface JoinOptions {
   channelId?: string;
@@ -17,11 +18,28 @@ const EXPECTED_POSE_BYTES = 172;
 // SERVER_DEDUP_MS_REF in client/src/constants.ts — keep them aligned by hand.
 const SERVER_DEDUP_MS = 750;
 
+// Byte offsets of the float32 fields in the pose binary (see pose-codec.ts).
+// Only float32 fields can carry NaN/Infinity; int16/uint16 fields are safe.
+const POSE_TORSO_POS_OFFSET = 4;   // 3 × float32 — world-space torso xyz
+const POSE_GRAP_ANCHOR_OFFSET = 160; // 3 × float32 — grapple anchor xyz
+
+
 interface DiedMessage {
   killerSessionId: string;
   x: number;
   y: number;
   z: number;
+}
+
+// Returns false if any float32 in the pose payload is non-finite.
+// Only checks the two float32 regions; int16/uint16 fields can't carry NaN.
+export function isPoseValid(raw: Uint8Array): boolean {
+  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  for (let i = 0; i < 3; i++) {
+    if (!Number.isFinite(view.getFloat32(POSE_TORSO_POS_OFFSET + i * 4, true))) return false;
+    if (!Number.isFinite(view.getFloat32(POSE_GRAP_ANCHOR_OFFSET + i * 4, true))) return false;
+  }
+  return true;
 }
 
 const textEncoder = new TextEncoder();
@@ -37,6 +55,9 @@ const textEncoder = new TextEncoder();
 export class SwanginRoom extends Room<SwanginState> {
   override maxClients = 16;
   private readonly lastDeathAt = new Map<string, number>();
+  // Per-client rate limiters. Pose: ~30 Hz cap (20 Hz expected). Died: 5 Hz cap.
+  private readonly poseBuckets = new Map<string, TokenBucket>();
+  private readonly diedBuckets = new Map<string, TokenBucket>();
 
   override onCreate(): void {
     const state = new SwanginState();
@@ -44,10 +65,18 @@ export class SwanginRoom extends Room<SwanginState> {
     this.setState(state);
 
     this.onMessage<Uint8Array>('pose', (client, raw) => {
-      // No validation beyond shape — clients are authoritative for their own
-      // pose by design (PLAN.md: client-authoritative model). We only check
-      // that the byte length matches the documented codec width.
       if (!raw || raw.byteLength !== EXPECTED_POSE_BYTES) return;
+
+      let bucket = this.poseBuckets.get(client.sessionId);
+      if (!bucket) {
+        bucket = new TokenBucket(30, 30);
+        this.poseBuckets.set(client.sessionId, bucket);
+      }
+      if (!bucket.allow()) return;
+
+      // Reject if any float32 field is non-finite — NaN/Infinity would crash
+      // the receiver's setNextKinematicTranslation call.
+      if (!isPoseValid(raw)) return;
 
       const sidBytes = textEncoder.encode(client.sessionId);
       if (sidBytes.byteLength > 255) return; // sidLen is a uint8
@@ -61,6 +90,14 @@ export class SwanginRoom extends Room<SwanginState> {
     this.onMessage<DiedMessage>('died', (client, data) => {
       if (!data || typeof data.killerSessionId !== 'string') return;
       if (typeof data.x !== 'number' || typeof data.y !== 'number' || typeof data.z !== 'number') return;
+      if (!Number.isFinite(data.x) || !Number.isFinite(data.y) || !Number.isFinite(data.z)) return;
+
+      let diedBucket = this.diedBuckets.get(client.sessionId);
+      if (!diedBucket) {
+        diedBucket = new TokenBucket(5, 5);
+        this.diedBuckets.set(client.sessionId, diedBucket);
+      }
+      if (!diedBucket.allow()) return;
 
       // Reject self-kills.
       if (data.killerSessionId === client.sessionId) return;
@@ -110,6 +147,8 @@ export class SwanginRoom extends Room<SwanginState> {
         this.lastDeathAt.delete(key);
       }
     }
+    this.poseBuckets.delete(id);
+    this.diedBuckets.delete(id);
     if (p) console.log(`[room] leave ${p.name} (${client.sessionId})`);
   }
 }
