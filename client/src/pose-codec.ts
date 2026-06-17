@@ -8,18 +8,24 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 // applyPose plumbing): a 70-float array — for each of 10 parts in
 // POSE_PART_ORDER, 7 floats (pos.xyz, quat.xyzw).
 //
-// Wire layout, all little-endian, fixed width = POSE_BYTES (168):
+// Wire layout, all little-endian, fixed width = POSE_BYTES (172):
 //
 //   off   size  field
-//   0     12    torso pos          (3 × float32, world coords)
-//   12    54    9 × limb pos       (3 × int16,  root-relative, ±POS_RANGE m)
-//   66    80    10 × quat          (smallest-three, 8 B each: 3×int16 + 1×u8 idx + 1 pad)
-//   146   2     speed              (uint16, scaled 0..SPEED_RANGE m/s)
-//   148   6     vel                (3 × int16, ±VEL_RANGE m/s)
-//   154   1     grap active        (uint8, 0 or 1)
-//   155   1     —                  (padding to align anchor on a 4-B boundary)
-//   156   12    grap anchor        (3 × float32, world coords)
-//   168   —     end
+//   0     4     tSendMs            (uint32, sender's performance.now() ms, mod 2^32)
+//   4     12    torso pos          (3 × float32, world coords)
+//   16    54    9 × limb pos       (3 × int16,  root-relative, ±POS_RANGE m)
+//   70    80    10 × quat          (smallest-three, 8 B each: 3×int16 + 1×u8 idx + 1 pad)
+//   150   2     speed              (uint16, scaled 0..SPEED_RANGE m/s)
+//   152   6     vel                (3 × int16, ±VEL_RANGE m/s)
+//   158   1     grap active        (uint8, 0 or 1)
+//   159   1     —                  (padding to align anchor on a 4-B boundary)
+//   160   12    grap anchor        (3 × float32, world coords)
+//   172   —     end
+//
+// tSendMs lets the receiver interpolate against the sender's clock instead of
+// arrival time, so network jitter doesn't translate into peer jitter. uint32
+// rolls over at 49.7 days of page-uptime — receivers handle wrap by unwrapping
+// against the previous sample's tSendMs.
 //
 // At 20 Hz this is ~3.4 KB/s/player — a ~4× reduction from the previous
 // JSON-ish encoding and well within PLAN's bandwidth budget. The remaining
@@ -31,7 +37,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 // the legal limb radius — comfortably below PLAN's 0.1° / 1 mm bound.
 
 export const POSE_FLOATS = 70;
-export const POSE_BYTES = 168;
+export const POSE_BYTES = 172;
 
 // Limb position quantization range. Limbs are at most ~1 m from the torso
 // even at full extension; pick ±2 m so we never clip on transient solver
@@ -55,18 +61,20 @@ const QUAT_SCALE = 32767 * Math.SQRT2;
 // pos.xyz + quat.xyzw stride POSE_PART_ORDER consumers expect.
 const PART_STRIDE = 7;
 
-const POS_BYTES_OFFSET = 0;
-const QUAT_BYTES_OFFSET = 12 + 9 * 6; // 66
-const SPEED_OFFSET = QUAT_BYTES_OFFSET + 10 * 8; // 146
-const VEL_OFFSET = SPEED_OFFSET + 2; // 148
-const GRAP_ACTIVE_OFFSET = VEL_OFFSET + 6; // 154
-const GRAP_ANCHOR_OFFSET = GRAP_ACTIVE_OFFSET + 2; // 156 (1 B pad)
+const T_SEND_OFFSET = 0;
+const POS_BYTES_OFFSET = 4;
+const QUAT_BYTES_OFFSET = POS_BYTES_OFFSET + 12 + 9 * 6; // 70
+const SPEED_OFFSET = QUAT_BYTES_OFFSET + 10 * 8; // 150
+const VEL_OFFSET = SPEED_OFFSET + 2; // 152
+const GRAP_ACTIVE_OFFSET = VEL_OFFSET + 6; // 158
+const GRAP_ANCHOR_OFFSET = GRAP_ACTIVE_OFFSET + 2; // 160 (1 B pad)
 
 export interface DecodedPose {
   pose: Float32Array;  // POSE_FLOATS floats — pos.xyz, quat.xyzw per part
   speed: number;
   vel: Float32Array;   // 3 floats — torso linvel xyz, m/s
   grap: Float32Array;  // 4 floats — [active, ax, ay, az]
+  tSendMs: number;     // sender's performance.now() at encode, ms (uint32)
 }
 
 interface Vec3Like { x: number; y: number; z: number }
@@ -138,9 +146,12 @@ export function encodePoseBytes(
   speed: number,
   vel: ArrayLike<number>,     // 3 floats
   grap: ArrayLike<number>,    // 4 floats
+  tSendMs: number = 0,        // sender's performance.now() in ms
 ): ArrayBuffer {
   const buf = new ArrayBuffer(POSE_BYTES);
   const view = new DataView(buf);
+
+  view.setUint32(T_SEND_OFFSET, (tSendMs >>> 0), true);
 
   // Torso pos (root) — float32 absolute world coords.
   const rx = pose[0];
@@ -153,7 +164,7 @@ export function encodePoseBytes(
   // Limb positions — int16 root-relative.
   for (let i = 1; i < 10; i++) {
     const po = i * PART_STRIDE;
-    const limbOffset = 12 + (i - 1) * 6;
+    const limbOffset = POS_BYTES_OFFSET + 12 + (i - 1) * 6;
     view.setInt16(limbOffset + 0, clampInt16(Math.round((pose[po + 0] - rx) * POS_SCALE)), true);
     view.setInt16(limbOffset + 2, clampInt16(Math.round((pose[po + 1] - ry) * POS_SCALE)), true);
     view.setInt16(limbOffset + 4, clampInt16(Math.round((pose[po + 2] - rz) * POS_SCALE)), true);
@@ -191,9 +202,12 @@ export function encodePose(
   torsoLinvel: Vec3Like,
   grappleActive: boolean,
   grappleAnchor: Vec3Like | null,
+  tSendMs: number,
 ): ArrayBuffer {
   const buf = new ArrayBuffer(POSE_BYTES);
   const view = new DataView(buf);
+
+  view.setUint32(T_SEND_OFFSET, (tSendMs >>> 0), true);
 
   const root = bodies[0].translation();
   const rx = root.x, ry = root.y, rz = root.z;
@@ -206,7 +220,7 @@ export function encodePose(
 
   for (let i = 1; i < 10; i++) {
     const t = bodies[i].translation();
-    const limbOffset = 12 + (i - 1) * 6;
+    const limbOffset = POS_BYTES_OFFSET + 12 + (i - 1) * 6;
     view.setInt16(limbOffset + 0, clampInt16(Math.round((t.x - rx) * POS_SCALE)), true);
     view.setInt16(limbOffset + 2, clampInt16(Math.round((t.y - ry) * POS_SCALE)), true);
     view.setInt16(limbOffset + 4, clampInt16(Math.round((t.z - rz) * POS_SCALE)), true);
@@ -233,6 +247,8 @@ export function decodePose(buf: ArrayBuffer | Uint8Array): DecodedPose {
     ? new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
     : new DataView(buf);
 
+  const tSendMs = view.getUint32(T_SEND_OFFSET, true);
+
   const pose = new Float32Array(POSE_FLOATS);
 
   const rx = view.getFloat32(POS_BYTES_OFFSET + 0, true);
@@ -245,7 +261,7 @@ export function decodePose(buf: ArrayBuffer | Uint8Array): DecodedPose {
 
   for (let i = 1; i < 10; i++) {
     const po = i * PART_STRIDE;
-    const limbOffset = 12 + (i - 1) * 6;
+    const limbOffset = POS_BYTES_OFFSET + 12 + (i - 1) * 6;
     pose[po + 0] = rx + view.getInt16(limbOffset + 0, true) / POS_SCALE;
     pose[po + 1] = ry + view.getInt16(limbOffset + 2, true) / POS_SCALE;
     pose[po + 2] = rz + view.getInt16(limbOffset + 4, true) / POS_SCALE;
@@ -265,5 +281,5 @@ export function decodePose(buf: ArrayBuffer | Uint8Array): DecodedPose {
   grap[2] = view.getFloat32(GRAP_ANCHOR_OFFSET + 4, true);
   grap[3] = view.getFloat32(GRAP_ANCHOR_OFFSET + 8, true);
 
-  return { pose, speed, vel, grap };
+  return { pose, speed, vel, grap, tSendMs };
 }

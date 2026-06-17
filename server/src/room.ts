@@ -11,7 +11,7 @@ interface JoinOptions {
 // Wire size of the binary pose payload. Kept in sync by hand with
 // client/src/pose-codec.ts → POSE_BYTES. A mismatch here is a wire-format
 // drift, so the validator rejects rather than silently re-broadcasting.
-const EXPECTED_POSE_BYTES = 168;
+const EXPECTED_POSE_BYTES = 172;
 
 // Server-side dedup window for `died` messages. Mirror of
 // SERVER_DEDUP_MS_REF in client/src/constants.ts — keep them aligned by hand.

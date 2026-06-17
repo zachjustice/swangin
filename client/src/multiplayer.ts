@@ -28,8 +28,14 @@ interface PoseEnvelope {
   speed: number;
   vel: Float32Array;
   grap: Float32Array;
-  s: string; // sender sessionId
-  t: number; // arrival time (set on receipt)
+  s: string;           // sender sessionId
+  // Sender's performance.now() when this sample was encoded. The receiver
+  // interpolates against this instead of arrival time so network jitter
+  // doesn't translate into peer jitter — the buffer's time axis matches the
+  // sender's true 20 Hz cadence.
+  tSendMs: number;
+  // Local arrival time, only used for pending-bucket TTL eviction.
+  tArriveMs: number;
 }
 
 const textDecoder = new TextDecoder();
@@ -60,8 +66,12 @@ export interface Peer extends PeerSpeedInfo {
   ragdoll: RemoteRagdoll;
   torso: RAPIER.RigidBody;
   buffer: PoseEnvelope[];
-  // `setKillCount` proxy so collision code never reaches into the schema —
-  // the Multiplayer instance bridges Colyseus diffs to ragdoll setters.
+  // Estimated `localArrival - tSendMs` for this peer. Tracks the smallest
+  // observed transit time + clock skew (Cristian's algorithm intuition) —
+  // the least-delayed sample is closest to true. Used to convert renderTime
+  // on our local clock into the peer's clock. NaN until the first sample
+  // arrives; once set, only decreases (sample with lower transit replaces).
+  clockOffsetMs: number;
 }
 
 export interface MultiplayerOptions {
@@ -189,13 +199,15 @@ export class Multiplayer {
       if (raw.byteLength !== headerLen + POSE_BYTES) return;
       const sid = textDecoder.decode(raw.subarray(1, headerLen));
       const decoded = decodePose(raw.subarray(headerLen));
+      const arrive = performance.now();
       const env: PoseEnvelope = {
         pose: decoded.pose,
         speed: decoded.speed,
         vel: decoded.vel,
         grap: decoded.grap,
         s: sid,
-        t: performance.now(),
+        tSendMs: decoded.tSendMs,
+        tArriveMs: arrive,
       };
       const peer = this.peers.get(sid);
       if (!peer) {
@@ -205,8 +217,7 @@ export class Multiplayer {
         if (bucket.length > BUFFER_MAX) bucket.shift();
         return;
       }
-      peer.buffer.push(env);
-      if (peer.buffer.length > BUFFER_MAX) peer.buffer.shift();
+      this.ingestPose(peer, env);
     });
 
     room.onMessage<ConfettiBroadcast>('confetti', (msg) => {
@@ -236,15 +247,15 @@ export class Multiplayer {
     this.room.send('died', { killerSessionId, x, y, z });
   }
 
-  // Call once per render frame. Samples each peer's buffer at now - INTERP_DELAY_MS
-  // and applies the interpolated pose to its kinematic ragdoll.
+  // Call once per render frame. Samples each peer's buffer at
+  // peerClockNow - INTERP_DELAY_MS and applies the interpolated pose to its
+  // kinematic ragdoll. peerClockNow = now - peer.clockOffsetMs.
   update(dtSeconds = 1 / 60): void {
     const now = performance.now();
-    const renderTime = now - INTERP_DELAY_MS;
     // Evict pending buckets whose last envelope is older than PENDING_TTL_MS
     // so sessionIds that never get an onAdd don't accumulate indefinitely.
     for (const [sid, bucket] of this.pending) {
-      if (bucket.length > 0 && now - bucket[bucket.length - 1].t > PENDING_TTL_MS) {
+      if (bucket.length > 0 && now - bucket[bucket.length - 1].tArriveMs > PENDING_TTL_MS) {
         this.pending.delete(sid);
       }
     }
@@ -254,35 +265,44 @@ export class Multiplayer {
       peer.ragdoll.trail.update(dtSeconds);
       const buf = peer.buffer;
       if (buf.length === 0) continue;
+
+      // Render time on the SENDER's clock = our local now translated by the
+      // estimated offset, then trailed by INTERP_DELAY_MS to keep ~2 samples
+      // of buffer ahead at the 20 Hz cadence.
+      const renderTime = (now - peer.clockOffsetMs) - INTERP_DELAY_MS;
+
       let appliedFresh = false;
-      if (buf.length === 1 || renderTime <= buf[0].t) {
+      const last = buf[buf.length - 1];
+
+      // Pin to buf[0] until renderTime catches up: with sender-clock-aligned
+      // timing, renderTime = sendTime_S0 - 100 ms at the first arrival and
+      // advances at local rate, so the pin lasts ~INTERP_DELAY_MS and then
+      // engages interpolation smoothly (alpha grows from 0 — no backward snap).
+      if (buf.length === 1 || renderTime <= buf[0].tSendMs) {
         peer.ragdoll.applyPose(buf[0].pose, buf[0].speed, buf[0].vel, buf[0].grap);
         appliedFresh = true;
+      } else if (renderTime >= last.tSendMs) {
+        peer.ragdoll.applyPose(last.pose, last.speed, last.vel, last.grap);
+        appliedFresh = true;
+        // Trim everything but the most-recent sample so we don't grow forever
+        // when render falls behind the buffer.
+        if (buf.length > 1) peer.buffer = [last];
       } else {
-        const last = buf[buf.length - 1];
-        if (renderTime >= last.t) {
-          peer.ragdoll.applyPose(last.pose, last.speed, last.vel, last.grap);
-          appliedFresh = true;
-          // Trim everything but the most-recent sample so we don't grow forever
-          // when render falls behind the buffer.
-          if (buf.length > 1) peer.buffer = [last];
-        } else {
-          // Find the pair straddling renderTime.
-          for (let i = buf.length - 1; i > 0; i--) {
-            const b = buf[i];
-            const a = buf[i - 1];
-            if (a.t <= renderTime && renderTime <= b.t) {
-              const span = b.t - a.t || 1;
-              const alpha = (renderTime - a.t) / span;
-              lerpPose(a, b, alpha, this.outPose);
-              // Carry grapple state with no interp — match the newer sample.
-              // Same for speed/vel (using the newer sample is closer to "now").
-              peer.ragdoll.applyPose(this.outPose, b.speed, b.vel, b.grap);
-              appliedFresh = true;
-              // Drop samples older than `a` so buffer can't grow unboundedly.
-              if (i - 1 > 0) peer.buffer = buf.slice(i - 1);
-              break;
-            }
+        // Find the pair straddling renderTime on the sender's clock.
+        for (let i = buf.length - 1; i > 0; i--) {
+          const b = buf[i];
+          const a = buf[i - 1];
+          if (a.tSendMs <= renderTime && renderTime <= b.tSendMs) {
+            const span = b.tSendMs - a.tSendMs || 1;
+            const alpha = (renderTime - a.tSendMs) / span;
+            lerpPose(a, b, alpha, this.outPose);
+            // Carry grapple state with no interp — match the newer sample.
+            // Same for speed/vel (using the newer sample is closer to "now").
+            peer.ragdoll.applyPose(this.outPose, b.speed, b.vel, b.grap);
+            appliedFresh = true;
+            // Drop samples older than `a` so buffer can't grow unboundedly.
+            if (i - 1 > 0) peer.buffer = buf.slice(i - 1);
+            break;
           }
         }
       }
@@ -302,6 +322,20 @@ export class Multiplayer {
     }
   }
 
+  // Push a freshly-arrived envelope onto the peer's buffer and refresh the
+  // clock-offset estimate. The offset is min-observed (arrival - send) — the
+  // least-delayed sample is closest to true transit + skew. Subsequent
+  // samples can only lower it; this is robust to sustained queueing delays
+  // because one fast sample wins for the rest of the session.
+  private ingestPose(peer: Peer, env: PoseEnvelope): void {
+    const transit = env.tArriveMs - env.tSendMs;
+    if (Number.isNaN(peer.clockOffsetMs) || transit < peer.clockOffsetMs) {
+      peer.clockOffsetMs = transit;
+    }
+    peer.buffer.push(env);
+    if (peer.buffer.length > BUFFER_MAX) peer.buffer.shift();
+  }
+
   private addPeer(sessionId: string, state: PlayerState): void {
     const ragdoll = createRemoteRagdoll(
       this.opts.scene,
@@ -311,16 +345,21 @@ export class Multiplayer {
       state.name,
       this.opts.spawnHint,
     );
-    const bucket = this.pending.get(sessionId) ?? [];
+    const pending = this.pending.get(sessionId) ?? [];
     this.pending.delete(sessionId);
-    this.peers.set(sessionId, {
+    const peer: Peer = {
       state,
       ragdoll,
       torso: ragdoll.torso,
-      buffer: bucket,
+      buffer: [],
+      clockOffsetMs: NaN,
       get lastSpeed() { return ragdoll.lastSpeed; },
       get lastVel() { return ragdoll.lastVel; },
-    });
+    };
+    this.peers.set(sessionId, peer);
+    // Replay any envelopes that arrived before onAdd through the same
+    // ingestion path so clockOffsetMs picks up the earliest fast sample.
+    for (const env of pending) this.ingestPose(peer, env);
   }
 
   private removePeer(sessionId: string): void {

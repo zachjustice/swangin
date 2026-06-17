@@ -89,6 +89,20 @@ describe('pose-codec', () => {
     assert.equal(buf.byteLength, POSE_BYTES);
   });
 
+  it('round-trips the send-time timestamp', () => {
+    const { pose, speed, vel, grap } = buildPose(mulberry32(7));
+    const tSendMs = 1_234_567;
+    const buf = encodePoseBytes(pose, speed, vel, grap, tSendMs);
+    const decoded = decodePose(buf);
+    assert.equal(decoded.tSendMs, tSendMs);
+  });
+
+  it('defaults tSendMs to 0 when omitted', () => {
+    const { pose, speed, vel, grap } = buildPose(mulberry32(8));
+    const decoded = decodePose(encodePoseBytes(pose, speed, vel, grap));
+    assert.equal(decoded.tSendMs, 0);
+  });
+
   it('round-trips position within 1 mm and rotation within 0.1° over many samples', () => {
     const rand = mulberry32(42);
     // PLAN's documented precision bounds — checked against the tightest

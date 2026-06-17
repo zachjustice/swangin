@@ -208,6 +208,12 @@ function updateReelMode(): void {
 
 let last = performance.now() / 1000;
 let accumulator = 0;
+// Pose send is driven from the fixed-step substep loop so the cadence stays
+// locked to physics regardless of tab throttling or frame-rate drift. Each
+// substep adds FIXED_DT; when the bucket fills past POSE_SEND_INTERVAL_S the
+// current pose is broadcast and the bucket drains by one interval.
+const POSE_SEND_INTERVAL_S = 1 / POSE_SEND_HZ;
+let sendAccumulator = 0;
 
 function checkRespawn() {
   if (!spawned) return;
@@ -313,9 +319,26 @@ function tick() {
     collision.drain(eventQueue, collisionCtx());
     ragdoll.updateSpeed(FIXED_DT);
     accumulator -= FIXED_DT;
+    sendAccumulator += FIXED_DT;
+    if (sendAccumulator >= POSE_SEND_INTERVAL_S && multiplayer) {
+      const grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
+      multiplayer.sendPose(encodePose(
+        ragdoll.poseBodies,
+        ragdoll.smoothedSpeed,
+        ragdoll.linvel(),
+        grapple.isActive,
+        grappleAnchor,
+        performance.now(),
+      ));
+      sendAccumulator -= POSE_SEND_INTERVAL_S;
+    }
     steps++;
   }
-  if (steps === MAX_SUBSTEPS) accumulator = 0;
+  if (steps === MAX_SUBSTEPS) {
+    accumulator = 0;
+    // Don't carry over a stale send tick if we just clamped — fresh start next frame.
+    sendAccumulator = 0;
+  }
 
   cloudLayer.update(now);
 
@@ -393,20 +416,7 @@ multiplayer = new Multiplayer({
   localRagdoll: ragdoll,
 });
 
-multiplayer.connect().then(() => {
-  // Broadcast full ragdoll pose at 20 Hz; remotes interpolate ~100 ms in the past.
-  setInterval(() => {
-    if (!multiplayer || !spawned) return;
-    const grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
-    multiplayer.sendPose(encodePose(
-      ragdoll.poseBodies,
-      ragdoll.smoothedSpeed,
-      ragdoll.linvel(),
-      grapple.isActive,
-      grappleAnchor,
-    ));
-  }, Math.round(1000 / POSE_SEND_HZ));
-}).catch((err) => {
+multiplayer.connect().catch((err) => {
   console.error('[mp] failed to join room', err);
 });
 
