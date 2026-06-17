@@ -14,39 +14,19 @@ import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
 import { createOrb, ORB_RADIUS } from './orb.ts';
 import { createCloudLayer } from './sky-clouds.ts';
-import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS, MAX_RAGDOLL_BODY_SPEED } from './constants.ts';
+import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS, MAX_RAGDOLL_BODY_SPEED, SKY, SKY_ZENITH, ROYGBIV, SKY_TRANSITION_DURATION, FIXED_DT, MAX_SUBSTEPS, RESPAWN_Y, WORLD_HALF, POSE_SEND_HZ } from './constants.ts';
 import * as collision from './collision.ts';
 import { Confetti } from './confetti.ts';
 import { PlayerLifecycle } from './lifecycle.ts';
 import { DevDummy } from './dev-dummy.ts';
 import { LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
 
-const SKY = 0x6b9bcc;
-const SKY_ZENITH = 0x2a5cb8;
-
-const ROYGBIV = [
-  0x9b4040, // Red
-  0x9b6b40, // Orange
-  0x8b8b35, // Yellow
-  0x3a8a3a, // Green
-  0x6b9bcc, // Blue (default)
-  0x40409b, // Indigo
-  0x6b409b, // Violet
-];
 let skyIndex = 4;
 const skyFrom = new THREE.Color(SKY);
 const skyTo = new THREE.Color(SKY);
 const skyCurrent = new THREE.Color(SKY);
 const skyZenithCurrent = new THREE.Color(SKY_ZENITH);
 let skyT = 1.0;
-const SKY_TRANSITION_DURATION = 1.5;
-
-const FIXED_DT = 1 / 60;
-const MAX_SUBSTEPS = 5;
-
-const RESPAWN_Y = -50;
-const WORLD_HALF = 50;
-const POSE_SEND_HZ = 20;
 
 const prompt = document.getElementById('prompt') as HTMLDivElement;
 // Picker is optional — index.html may comment it out for production.

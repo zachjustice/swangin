@@ -79,3 +79,28 @@ export const GRAPPLE_REEL_SPEED = 4.0;       // m/s of rope shortening / lengthe
 export const GRAPPLE_DASH_REEL_SPEED = 6.0;  // m/s; ~20% faster than REEL_SPEED
 export const GRAPPLE_REEL_IMPULSE_GAIN = 0.8; // scales the extra pull impulse on reel-in
 export const GRAPPLE_REEL_DOUBLE_TAP_MS = 300; // second Space keydown must arrive within this
+
+// --- Sky colors ---
+export const SKY = 0x6b9bcc;
+export const SKY_ZENITH = 0x2a5cb8;
+export const ROYGBIV = [
+  0x9b4040, // Red
+  0x9b6b40, // Orange
+  0x8b8b35, // Yellow
+  0x3a8a3a, // Green
+  0x6b9bcc, // Blue (default)
+  0x40409b, // Indigo
+  0x6b409b, // Violet
+];
+export const SKY_TRANSITION_DURATION = 1.5;
+
+// --- Physics loop ---
+export const FIXED_DT = 1 / 60;
+export const MAX_SUBSTEPS = 5;
+
+// --- World bounds ---
+export const RESPAWN_Y = -50;
+export const WORLD_HALF = 50;
+
+// --- Networking ---
+export const POSE_SEND_HZ = 20;
