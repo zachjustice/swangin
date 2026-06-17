@@ -3,10 +3,23 @@ import { Line2 } from 'three/examples/jsm/lines/Line2.js';
 import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH } from './constants.ts';
+import {
+  GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH,
+  GRAPPLE_MAX_LENGTH, GRAPPLE_MIN_LENGTH,
+  GRAPPLE_REEL_SPEED, GRAPPLE_DASH_REEL_SPEED,
+} from './constants.ts';
 
-// Rigid fixed-length grapple: a rope joint between the hand and a one-off fixed
-// body parked at the surface hit point.
+// Rigid grapple: a rope joint between the hand and a fixed anchor body.
+// Supports reel-in (Space) and reel-out (Shift) by recreating the joint each
+// frame with the updated length. Rapier's RopeImpulseJoint doesn't expose a
+// setLength setter, so remove+create is the cheapest correct path.
+
+interface ReelMode {
+  direction: 'in' | 'out' | null;
+  dash: boolean;
+}
+
+const NO_REEL: ReelMode = { direction: null, dash: false };
 
 export class Grapple {
 
@@ -16,6 +29,8 @@ export class Grapple {
   private readonly lineGeom: LineGeometry;
   private readonly tmpHandWorld = new THREE.Vector3();
   private readonly tmpHandQuat = new THREE.Quaternion();
+  private currentLength = 0;
+  private mode: ReelMode = NO_REEL;
 
   constructor(
     scene: THREE.Scene,
@@ -58,17 +73,13 @@ export class Grapple {
     this.release();
 
     this.handWorldPos(this.tmpHandWorld);
-    const length = this.tmpHandWorld.distanceTo(anchorWorld);
+    const length = Math.min(this.tmpHandWorld.distanceTo(anchorWorld), GRAPPLE_MAX_LENGTH);
+    this.currentLength = length;
 
     this.anchorBody = this.world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(anchorWorld.x, anchorWorld.y, anchorWorld.z),
     );
-    const params = RAPIER.JointData.rope(
-      length,
-      { x: this.handLocal.x, y: this.handLocal.y, z: this.handLocal.z },
-      { x: 0, y: 0, z: 0 },
-    );
-    this.joint = this.world.createImpulseJoint(params, this.hand, this.anchorBody, true);
+    this.joint = this.createJoint(length);
     this.line.visible = true;
   }
 
@@ -81,17 +92,53 @@ export class Grapple {
       this.world.removeRigidBody(this.anchorBody);
       this.anchorBody = null;
     }
+    this.mode = NO_REEL;
     this.line.visible = false;
   }
 
-  update(): void {
-    if (!this.anchorBody) return;
+  setReelMode(mode: ReelMode): void {
+    this.mode = mode;
+  }
+
+  update(dtSec: number): void {
+    if (!this.anchorBody || !this.joint) return;
+
+    if (this.mode.direction !== null) {
+      const rate = this.mode.direction === 'in'
+        ? (this.mode.dash ? GRAPPLE_DASH_REEL_SPEED : GRAPPLE_REEL_SPEED)
+        : GRAPPLE_REEL_SPEED;
+
+      if (this.mode.direction === 'in') {
+        this.currentLength = Math.max(GRAPPLE_MIN_LENGTH, this.currentLength - rate * dtSec);
+        if (this.currentLength <= GRAPPLE_MIN_LENGTH) {
+          this.release();
+          return;
+        }
+      } else {
+        this.currentLength = Math.min(GRAPPLE_MAX_LENGTH, this.currentLength + rate * dtSec);
+      }
+
+      // Recreate the joint with the updated length (Rapier has no setLength on RopeJoint).
+      this.world.removeImpulseJoint(this.joint, true);
+      this.joint = this.createJoint(this.currentLength);
+    }
+
+    // Update rope line visualization.
     this.handWorldPos(this.tmpHandWorld);
     const a = this.anchorBody.translation();
     this.lineGeom.setPositions([
       this.tmpHandWorld.x, this.tmpHandWorld.y, this.tmpHandWorld.z,
       a.x, a.y, a.z,
     ]);
+  }
+
+  private createJoint(length: number): RAPIER.ImpulseJoint {
+    const params = RAPIER.JointData.rope(
+      length,
+      { x: this.handLocal.x, y: this.handLocal.y, z: this.handLocal.z },
+      { x: 0, y: 0, z: 0 },
+    );
+    return this.world.createImpulseJoint(params, this.hand, this.anchorBody!, true);
   }
 
   private handWorldPos(out: THREE.Vector3): void {

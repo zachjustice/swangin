@@ -14,7 +14,7 @@ import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
 import { createOrb } from './orb.ts';
 import { createCloudLayer } from './sky-clouds.ts';
-import { MOVE_IMPULSE, MOVE_MAX_SPEED } from './constants.ts';
+import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS } from './constants.ts';
 import * as collision from './collision.ts';
 import { Confetti } from './confetti.ts';
 import { PlayerLifecycle } from './lifecycle.ts';
@@ -163,7 +163,23 @@ const lifecycle = new PlayerLifecycle({
 });
 
 let userLabel = '…';
-const keys = { w: false, a: false, s: false, d: false };
+const keys = { w: false, a: false, s: false, d: false, space: false, shiftLeft: false, shiftRight: false };
+let lastSpaceDownTime = -Infinity;
+let dashArmed = false;
+
+function updateReelMode(): void {
+  if (!grapple.isActive) {
+    grapple.setReelMode({ direction: null, dash: false });
+    return;
+  }
+  if (keys.space) {
+    grapple.setReelMode({ direction: 'in', dash: dashArmed });
+  } else if (keys.shiftLeft || keys.shiftRight) {
+    grapple.setReelMode({ direction: 'out', dash: false });
+  } else {
+    grapple.setReelMode({ direction: null, dash: false });
+  }
+}
 
 let last = performance.now() / 1000;
 let accumulator = 0;
@@ -225,6 +241,11 @@ function collisionCtx(): collision.CollisionContext {
     onLocalFasterHit: devDummy
       ? (sid) => { if (devDummy && sid === devDummy.sessionId) devDummy.onHit(confetti); }
       : undefined,
+    // Dummy-only: real peers move on their own machine and stream back, so
+    // we don't wire this for them.
+    onPeerImpulse: devDummy
+      ? (sid, impulse) => { if (devDummy && sid === devDummy.sessionId) devDummy.kick(impulse); }
+      : undefined,
   };
 }
 
@@ -255,12 +276,12 @@ function tick() {
   lifecycle.tick(performance.now());
   checkRespawn();
   ragdoll.sync();
-  grapple.update();
+  grapple.update(frameTime);
   tpCamera.update(frameTime);
   reticle.update(camera);
   ragdoll.trail.update(frameTime);
   multiplayer?.update(frameTime);
-  devDummy?.update(performance.now());
+  devDummy?.update(performance.now(), frameTime);
   if (devSpeedHud) devSpeedHud.textContent = `${ragdoll.smoothedSpeed.toFixed(1)} m/s`;
   orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);
   confetti.update(frameTime);
@@ -331,7 +352,10 @@ renderer.domElement.addEventListener('click', () => {
 renderer.domElement.addEventListener('mousedown', (e) => {
   if (e.button !== 0 || !tpCamera.isLocked) return;
   if (!lifecycle.canControl()) return;
-  if (reticle.hitPoint) grapple.fire(reticle.hitPoint);
+  if (reticle.hitPoint) {
+    grapple.fire(reticle.hitPoint);
+    updateReelMode();
+  }
 });
 
 window.addEventListener('mouseup', (e) => {
@@ -349,6 +373,21 @@ window.addEventListener('keydown', (e) => {
     keys.s = true;
   } else if (e.code === 'KeyD') {
     keys.d = true;
+  } else if (e.code === 'Space') {
+    e.preventDefault();
+    if (!keys.space) {
+      const now = performance.now();
+      if (now - lastSpaceDownTime < GRAPPLE_REEL_DOUBLE_TAP_MS) dashArmed = true;
+      lastSpaceDownTime = now;
+    }
+    keys.space = true;
+    updateReelMode();
+  } else if (e.code === 'ShiftLeft') {
+    keys.shiftLeft = true;
+    updateReelMode();
+  } else if (e.code === 'ShiftRight') {
+    keys.shiftRight = true;
+    updateReelMode();
   }
 });
 
@@ -357,4 +396,15 @@ window.addEventListener('keyup', (e) => {
   else if (e.code === 'KeyA') keys.a = false;
   else if (e.code === 'KeyS') keys.s = false;
   else if (e.code === 'KeyD') keys.d = false;
+  else if (e.code === 'Space') {
+    keys.space = false;
+    dashArmed = false;
+    updateReelMode();
+  } else if (e.code === 'ShiftLeft') {
+    keys.shiftLeft = false;
+    updateReelMode();
+  } else if (e.code === 'ShiftRight') {
+    keys.shiftRight = false;
+    updateReelMode();
+  }
 });

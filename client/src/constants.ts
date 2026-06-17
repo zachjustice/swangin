@@ -66,3 +66,11 @@ export const TRAIL_SAMPLES = 14;    // ~280 ms of history
 export const TRAIL_TELEPORT_MAX_M = 4.0;
 export const TRAIL_ANCHOR_PARTS: ReadonlyArray<PosePart> =
     ['head', 'armLowerL', 'armLowerR', 'legL_shin', 'legR_shin'];
+
+// --- Grapple reel-in / reel-out ---
+export const GRAPPLE_MAX_LENGTH = 40.0;      // meters; cap for reel-out
+export const GRAPPLE_MIN_LENGTH = 0.5;       // meters; auto-disconnect threshold
+export const GRAPPLE_REEL_SPEED = 4.0;       // m/s of rope shortening / lengthening
+export const GRAPPLE_DASH_REEL_SPEED = 6.0;  // m/s; ~20% faster than REEL_SPEED
+export const GRAPPLE_REEL_IMPULSE_GAIN = 0.8; // scales the extra pull impulse on reel-in
+export const GRAPPLE_REEL_DOUBLE_TAP_MS = 300; // second Space keydown must arrive within this

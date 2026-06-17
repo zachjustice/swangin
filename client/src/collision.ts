@@ -75,6 +75,11 @@ export interface CollisionContext {
   // remote client decides its own death. Used by the dev dummy (which has
   // no real client behind it) to trigger a local-only confetti effect.
   onLocalFasterHit?(remoteSession: string): void;
+  // Optional: fired alongside every cross-player local-torso impulse with the
+  // equal-and-opposite impulse vector. In real multiplayer this stays unset —
+  // the remote's own machine moves their body and streams it back. The dev
+  // dummy wires this up so its kinematic pose visibly swings on contact.
+  onPeerImpulse?(remoteSession: string, impulse: { x: number; y: number; z: number }): void;
 }
 
 export function drain(eventQueue: RAPIER.EventQueue, ctx: CollisionContext): void {
@@ -148,6 +153,7 @@ export function drain(eventQueue: RAPIER.EventQueue, ctx: CollisionContext): voi
           { x: dx * mag, y: dy * mag, z: dz * mag },
           true,
         );
+        ctx.onPeerImpulse?.(remoteSession, { x: -dx * mag, y: -dy * mag, z: -dz * mag });
       }
     }
 
