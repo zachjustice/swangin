@@ -8,24 +8,14 @@ interface JoinOptions {
   color?: number;
 }
 
-// Wire format: 70 floats pose (10 parts × 7) + 1 float scalar speed + 3 floats
-// velocity vector + 4 floats grapple state. Kept in sync with
-// client/src/pose-codec.ts — POSE_FLOATS = 70, the extra speed/vel fields are
-// the v0.2 collision feature addition.
-const EXPECTED_POSE_FLOATS = 70;
-const EXPECTED_VEL_FLOATS = 3;
-const EXPECTED_GRAP_FLOATS = 4;
+// Wire size of the binary pose payload. Kept in sync by hand with
+// client/src/pose-codec.ts → POSE_BYTES. A mismatch here is a wire-format
+// drift, so the validator rejects rather than silently re-broadcasting.
+const EXPECTED_POSE_BYTES = 168;
 
 // Server-side dedup window for `died` messages. Mirror of
 // SERVER_DEDUP_MS_REF in client/src/constants.ts — keep them aligned by hand.
 const SERVER_DEDUP_MS = 750;
-
-interface PoseClientMessage {
-  pose: number[]; // 70 floats
-  speed: number;  // smoothed torso |linvel|, m/s
-  vel: number[];  // 3 floats — torso linvel xyz, m/s
-  grap: number[]; // 4 floats — [active, ax, ay, az]
-}
 
 interface DiedMessage {
   killerSessionId: string;
@@ -34,9 +24,12 @@ interface DiedMessage {
   z: number;
 }
 
-// Server is a relay: identity lives in schema, pose flows through messages
-// the server forwards to every other client tagged with the sender's id.
-// Each receiver timestamps on arrival and interpolates ~100 ms in the past.
+const textEncoder = new TextEncoder();
+
+// Server is a relay: identity lives in schema, pose flows through binary
+// messages the server prefixes with the sender's sessionId and forwards to
+// every other client. Each receiver timestamps on arrival and interpolates
+// ~100 ms in the past.
 //
 // The one piece of game-state authority lives here: the `died` message
 // credits the killer's kills field via the Colyseus schema, with a small
@@ -50,25 +43,19 @@ export class SwanginRoom extends Room<SwanginState> {
     state.startedAt = Date.now();
     this.setState(state);
 
-    this.onMessage<PoseClientMessage>('pose', (client, data) => {
+    this.onMessage<Uint8Array>('pose', (client, raw) => {
       // No validation beyond shape — clients are authoritative for their own
-      // pose by design (PLAN.md: client-authoritative model).
-      if (!data) return;
-      if (!Array.isArray(data.pose) || data.pose.length !== EXPECTED_POSE_FLOATS) return;
-      if (typeof data.speed !== 'number') return;
-      if (!Array.isArray(data.vel) || data.vel.length !== EXPECTED_VEL_FLOATS) return;
-      if (!Array.isArray(data.grap) || data.grap.length !== EXPECTED_GRAP_FLOATS) return;
-      this.broadcast(
-        'pose',
-        {
-          s: client.sessionId,
-          pose: data.pose,
-          speed: data.speed,
-          vel: data.vel,
-          grap: data.grap,
-        },
-        { except: client },
-      );
+      // pose by design (PLAN.md: client-authoritative model). We only check
+      // that the byte length matches the documented codec width.
+      if (!raw || raw.byteLength !== EXPECTED_POSE_BYTES) return;
+
+      const sidBytes = textEncoder.encode(client.sessionId);
+      if (sidBytes.byteLength > 255) return; // sidLen is a uint8
+      const envelope = new Uint8Array(1 + sidBytes.byteLength + raw.byteLength);
+      envelope[0] = sidBytes.byteLength;
+      envelope.set(sidBytes, 1);
+      envelope.set(raw, 1 + sidBytes.byteLength);
+      this.broadcastBytes('pose', envelope, { except: client });
     });
 
     this.onMessage<DiedMessage>('died', (client, data) => {

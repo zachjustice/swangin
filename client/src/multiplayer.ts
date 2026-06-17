@@ -4,7 +4,7 @@ import * as Colyseus from 'colyseus.js';
 import { getStateCallbacks } from 'colyseus.js';
 import { createRemoteRagdoll, RemoteRagdoll } from './remote-ragdoll.ts';
 import { POSE_PART_ORDER } from './ragdoll-proportions.ts';
-import { POSE_FLOATS, type PoseMessage } from './pose-codec.ts';
+import { POSE_BYTES, POSE_FLOATS, decodePose } from './pose-codec.ts';
 import { clearPeerCooldown, type PeerSpeedInfo } from './collision.ts';
 import type { Confetti } from './confetti.ts';
 
@@ -23,10 +23,16 @@ interface RoomState {
   players: Map<string, PlayerState>;
 }
 
-interface PoseEnvelope extends PoseMessage {
+interface PoseEnvelope {
+  pose: Float32Array;  // decoded length-POSE_FLOATS pose
+  speed: number;
+  vel: Float32Array;
+  grap: Float32Array;
   s: string; // sender sessionId
   t: number; // arrival time (set on receipt)
 }
+
+const textDecoder = new TextDecoder();
 
 interface ConfettiBroadcast {
   victimSession: string;
@@ -77,7 +83,7 @@ const tmpQB = new THREE.Quaternion();
 
 // Lerp two pose envelopes at alpha ∈ [0,1] into `out` (length POSE_FLOATS).
 // Positions linearly, quaternions slerped (with shortest-path flip).
-function lerpPose(a: PoseEnvelope, b: PoseEnvelope, alpha: number, out: number[]): void {
+function lerpPose(a: PoseEnvelope, b: PoseEnvelope, alpha: number, out: Float32Array): void {
   const ap = a.pose, bp = b.pose;
   for (let i = 0; i < POSE_PART_ORDER.length; i++) {
     const o = i * 7;
@@ -103,7 +109,7 @@ export class Multiplayer {
   // Pose envelopes that arrived before the sender's onAdd. Drained into
   // peer.buffer when addPeer runs; stale entries evicted after PENDING_TTL_MS.
   private readonly pending = new Map<string, PoseEnvelope[]>();
-  private readonly outPose: number[] = new Array(POSE_FLOATS);
+  private readonly outPose: Float32Array = new Float32Array(POSE_FLOATS);
   // Fallback to local boot time if state hasn't synced yet — keeps the orb
   // animating from frame 1 instead of staring at a flat sphere.
   private startedAt = Date.now();
@@ -173,12 +179,28 @@ export class Multiplayer {
       this.removePeer(sessionId);
     });
 
-    room.onMessage<PoseEnvelope>('pose', (env) => {
-      env.t = performance.now();
-      const peer = this.peers.get(env.s);
+    room.onMessage<Uint8Array>('pose', (raw) => {
+      // Wire envelope: [u8 sidLen][sid UTF-8 bytes][POSE_BYTES pose payload].
+      // The server prepends the sender's sessionId so receivers can dispatch
+      // the decoded pose to the right peer.
+      if (!raw || raw.byteLength < 1) return;
+      const sidLen = raw[0];
+      const headerLen = 1 + sidLen;
+      if (raw.byteLength !== headerLen + POSE_BYTES) return;
+      const sid = textDecoder.decode(raw.subarray(1, headerLen));
+      const decoded = decodePose(raw.subarray(headerLen));
+      const env: PoseEnvelope = {
+        pose: decoded.pose,
+        speed: decoded.speed,
+        vel: decoded.vel,
+        grap: decoded.grap,
+        s: sid,
+        t: performance.now(),
+      };
+      const peer = this.peers.get(sid);
       if (!peer) {
-        let bucket = this.pending.get(env.s);
-        if (!bucket) { bucket = []; this.pending.set(env.s, bucket); }
+        let bucket = this.pending.get(sid);
+        if (!bucket) { bucket = []; this.pending.set(sid, bucket); }
         bucket.push(env);
         if (bucket.length > BUFFER_MAX) bucket.shift();
         return;
@@ -202,9 +224,11 @@ export class Multiplayer {
     });
   }
 
-  sendPose(payload: PoseMessage): void {
+  sendPose(payload: ArrayBuffer): void {
     if (!this.room) return;
-    this.room.send('pose', payload);
+    // sendBytes uses the ROOM_DATA_BYTES protocol — no msgpack wrapper, so
+    // the server gets exactly POSE_BYTES bytes of payload.
+    this.room.sendBytes('pose', new Uint8Array(payload));
   }
 
   sendDied(killerSessionId: string, x: number, y: number, z: number): void {
