@@ -410,6 +410,22 @@ function tick() {
 
   requestAnimationFrame(tick);
 }
+const welcomeModal = document.getElementById('welcome-modal') as HTMLDivElement;
+const playBtn = document.getElementById('play-btn') as HTMLButtonElement;
+let authReady = false;
+
+playBtn.textContent = 'Connecting…';
+playBtn.disabled = true;
+
+playBtn.addEventListener('click', () => {
+  if (!authReady) return;
+  spawned = true;
+  ragdoll.respawn(SPAWN_POINT);
+  ragdoll.setVisible(true);
+  welcomeModal.style.display = 'none';
+  tpCamera.lock();
+});
+
 tick();
 
 let userId = `standalone-${Math.random().toString(36).slice(2, 10)}`;
@@ -425,6 +441,10 @@ try {
 } catch (e) {
   console.error(e);
 }
+
+authReady = true;
+playBtn.textContent = 'Play';
+playBtn.disabled = false;
 
 const myColor = colorFromUserId(userId);
 ragdoll.material.color.setHex(myColor);
@@ -444,16 +464,23 @@ multiplayer = new Multiplayer({
 
 multiplayer.connect().catch((err) => {
   console.error('[mp] failed to join room', err);
-});
-
-const welcomeModal = document.getElementById('welcome-modal') as HTMLDivElement;
-const playBtn = document.getElementById('play-btn') as HTMLButtonElement;
-playBtn.addEventListener('click', () => {
-  spawned = true;
-  ragdoll.respawn(SPAWN_POINT);
-  ragdoll.setVisible(true);
-  welcomeModal.style.display = 'none';
-  tpCamera.lock();
+  const banner = document.createElement('div');
+  banner.textContent = 'Multiplayer unavailable — playing solo';
+  banner.style.cssText = [
+    'position:fixed',
+    'bottom:16px',
+    'left:50%',
+    'transform:translateX(-50%)',
+    'background:rgba(0,0,0,0.75)',
+    'color:#fff',
+    'padding:8px 20px',
+    'border-radius:6px',
+    'font:14px ui-sans-serif,system-ui,sans-serif',
+    'pointer-events:none',
+    'z-index:100',
+  ].join(';');
+  document.body.appendChild(banner);
+  setTimeout(() => banner.remove(), 6000);
 });
 
 renderer.domElement.addEventListener('click', () => {
