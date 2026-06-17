@@ -20,6 +20,7 @@ interface ReelMode {
 }
 
 const NO_REEL: ReelMode = { direction: null, dash: false };
+const JOINT_RECREATE_EPSILON = 0.01; // metres; skip recreate below this delta
 
 export class Grapple {
 
@@ -30,6 +31,7 @@ export class Grapple {
   private readonly tmpHandWorld = new THREE.Vector3();
   private readonly tmpHandQuat = new THREE.Quaternion();
   private currentLength = 0;
+  private jointLength = 0; // length the live joint was created with
   private mode: ReelMode = NO_REEL;
 
   constructor(
@@ -80,6 +82,7 @@ export class Grapple {
       RAPIER.RigidBodyDesc.fixed().setTranslation(anchorWorld.x, anchorWorld.y, anchorWorld.z),
     );
     this.joint = this.createJoint(length);
+    this.jointLength = length;
     this.line.visible = true;
   }
 
@@ -119,8 +122,12 @@ export class Grapple {
       }
 
       // Recreate the joint with the updated length (Rapier has no setLength on RopeJoint).
-      this.world.removeImpulseJoint(this.joint, true);
-      this.joint = this.createJoint(this.currentLength);
+      // Skip when the delta is sub-centimetre to avoid thrashing WASM at render rate.
+      if (Math.abs(this.currentLength - this.jointLength) >= JOINT_RECREATE_EPSILON) {
+        this.world.removeImpulseJoint(this.joint, true);
+        this.joint = this.createJoint(this.currentLength);
+        this.jointLength = this.currentLength;
+      }
     }
 
     // Update rope line visualization.
