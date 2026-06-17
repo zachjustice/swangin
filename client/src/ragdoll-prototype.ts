@@ -915,6 +915,7 @@ async function initSimulator() {
 
   const { createRagdoll } = await import('./ragdoll.ts');
   const { Grapple } = await import('./grapple.ts');
+  const { Collision } = await import('./collision.ts');
 
   // Spawn torso below the anchor; gravity + grapple settle it into a hang.
   const spawnPos = new THREE.Vector3(0, 0.3, 0);
@@ -922,6 +923,7 @@ async function initSimulator() {
     simulatorRoot as unknown as THREE.Scene,
     world,
     spawnPos,
+    new Collision(),
   );
 
   const grapple = new Grapple(

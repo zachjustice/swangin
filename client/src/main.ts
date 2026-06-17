@@ -15,7 +15,7 @@ import { encodePose } from './pose-codec.ts';
 import { createOrb, ORB_RADIUS } from './orb.ts';
 import { createCloudLayer } from './sky-clouds.ts';
 import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS, MAX_RAGDOLL_BODY_SPEED, SKY, SKY_ZENITH, ROYGBIV, SKY_TRANSITION_DURATION, FIXED_DT, MAX_SUBSTEPS, RESPAWN_Y, WORLD_HALF, POSE_SEND_HZ } from './constants.ts';
-import * as collision from './collision.ts';
+import { Collision, type CollisionContext } from './collision.ts';
 import { Confetti } from './confetti.ts';
 import { PlayerLifecycle } from './lifecycle.ts';
 import { DevDummy } from './dev-dummy.ts';
@@ -126,6 +126,7 @@ world.numSolverIterations = 8;
 // Event queue for cross-player collision events. drained each substep by
 // collision.drain after world.step(eventQueue).
 const eventQueue = new RAPIER.EventQueue(true);
+const collision = new Collision();
 
 const { count: cubeCount } = buildLattice(scene, world);
 addSpawnMarker(scene);
@@ -133,7 +134,7 @@ console.log(`[world] ${cubeCount} cubes built`);
 
 const orb = createOrb(scene, new THREE.Vector3(0, 0, 0));
 
-const ragdoll = createRagdoll(scene, world, SPAWN_POINT);
+const ragdoll = createRagdoll(scene, world, SPAWN_POINT, collision);
 let spawned = false;
 ragdoll.setVisible(false);
 
@@ -152,7 +153,7 @@ let devSpeedHud: HTMLDivElement | null = null;
 if (import.meta.env.DEV) {
   const halfExtent = CUBE_SIZE / 2;
   const attach = new THREE.Vector3(0, LATTICE_TOP_Y - halfExtent, 0);
-  devDummy = new DevDummy(scene, world, attach, 6, 0xff3366, 'Dummy');
+  devDummy = new DevDummy(scene, world, collision, attach, 6, 0xff3366, 'Dummy');
   console.log('[dev] dummy hung at', attach.toArray());
 
   devSpeedHud = document.createElement('div');
@@ -256,7 +257,7 @@ const preStepLocalVel = { x: 0, y: 0, z: 0 };
 // fresh. cheap — just object literal allocation. The dev dummy is merged
 // into getPeer's lookup so the collision rule sees it the same way it sees
 // a real Colyseus peer.
-function collisionCtx(): collision.CollisionContext {
+function collisionCtx(): CollisionContext {
   return {
     localRagdoll: {
       smoothedSpeed: ragdoll.smoothedSpeed,
@@ -414,6 +415,7 @@ multiplayer = new Multiplayer({
   color: myColor,
   confetti,
   localRagdoll: ragdoll,
+  collision,
 });
 
 multiplayer.connect().catch((err) => {

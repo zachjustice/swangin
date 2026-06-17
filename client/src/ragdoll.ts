@@ -19,7 +19,7 @@ import {
   NECK_KP, NECK_KD,
 } from './ragdoll-proportions.ts';
 import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
-import { registerCollider, unregisterCollider } from './collision.ts';
+import type { Collision } from './collision.ts';
 import { createKillCounter, type KillCounter } from './kill-counter.ts';
 import { SpeedTrail } from './speed-trail.ts';
 import { COLLISION_SPEED_EMA_ALPHA, TRAIL_ANCHOR_PARTS } from './constants.ts';
@@ -83,6 +83,7 @@ export function createRagdoll(
   scene: THREE.Scene,
   world: RAPIER.World,
   spawn: THREE.Vector3,
+  collision: Collision,
   color = 0xff7a55,
 ): Ragdoll {
   const mat = new THREE.MeshStandardMaterial({ color, ...MATERIAL });
@@ -127,7 +128,7 @@ export function createRagdoll(
     // Register for cross-player collision lookup. sessionId stays null —
     // null literally means "this is the local player" everywhere downstream,
     // so we don't have to backfill when Colyseus resolves.
-    registerCollider(collider.handle, { kind: 'local', sessionId: null, part: name });
+    collision.registerCollider(collider.handle, { kind: 'local', sessionId: null, part: name });
     colliderHandles.push(collider.handle);
     const part: Part = {
       name, body,
@@ -375,7 +376,7 @@ export function createRagdoll(
   );
 
   function dispose() {
-    for (const h of colliderHandles) unregisterCollider(h);
+    for (const h of colliderHandles) collision.unregisterCollider(h);
     killCounter.dispose();
     trail.dispose();
     scene.remove(skinned.mesh);

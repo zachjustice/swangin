@@ -5,7 +5,7 @@ import { LineGeometry } from 'three/examples/jsm/lines/LineGeometry.js';
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js';
 import { createRemoteRagdoll, RemoteRagdoll } from './remote-ragdoll.ts';
 import { POSE_PART_ORDER, PART_MASS } from './ragdoll-proportions.ts';
-import type { PeerSpeedInfo } from './collision.ts';
+import type { Collision, PeerSpeedInfo } from './collision.ts';
 import type { Confetti } from './confetti.ts';
 import { GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH } from './constants.ts';
 
@@ -57,6 +57,7 @@ export class DevDummy implements PeerSpeedInfo {
   constructor(
     scene: THREE.Scene,
     world: RAPIER.World,
+    collision: Collision,
     attachPoint: THREE.Vector3,
     hangLength: number,
     color: number,
@@ -69,7 +70,7 @@ export class DevDummy implements PeerSpeedInfo {
     this.hangPoint = attachPoint.clone();
     this.hangPoint.y -= hangLength;
 
-    this.ragdoll = createRemoteRagdoll(scene, world, sessionId, color, name, this.hangPoint);
+    this.ragdoll = createRemoteRagdoll(scene, world, sessionId, color, name, this.hangPoint, collision);
 
     // Snapshot each part's spawn translation as its rest position. This MUST
     // happen before any applyPose call so the captured values are the

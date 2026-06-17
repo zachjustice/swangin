@@ -15,7 +15,7 @@ import {
 } from './ragdoll-proportions.ts';
 import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 import { POSE_FLOATS } from './pose-codec.ts';
-import { registerCollider, unregisterCollider } from './collision.ts';
+import type { Collision } from './collision.ts';
 import { createKillCounter, type KillCounter } from './kill-counter.ts';
 import { SpeedTrail } from './speed-trail.ts';
 import { TRAIL_ANCHOR_PARTS } from './constants.ts';
@@ -62,6 +62,7 @@ export function createRemoteRagdoll(
   color: number,
   name: string,
   spawnHint: THREE.Vector3,
+  collision: Collision,
 ): RemoteRagdoll {
   const mat = new THREE.MeshStandardMaterial({ color, ...MATERIAL });
   const parts: RemotePart[] = [];
@@ -89,7 +90,7 @@ export function createRemoteRagdoll(
       colliderDesc.setCollisionGroups(REMOTE_RAGDOLL_GROUPS),
       body,
     );
-    registerCollider(collider.handle, { kind: 'remote', sessionId, part: name });
+    collision.registerCollider(collider.handle, { kind: 'remote', sessionId, part: name });
     colliderHandles.push(collider.handle);
     return { name, body };
   }
@@ -241,7 +242,7 @@ export function createRemoteRagdoll(
   }
 
   function dispose(): void {
-    for (const h of colliderHandles) unregisterCollider(h);
+    for (const h of colliderHandles) collision.unregisterCollider(h);
     for (const p of parts) world.removeRigidBody(p.body);
     killCounter.dispose();
     trail.dispose();

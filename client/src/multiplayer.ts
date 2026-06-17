@@ -5,7 +5,7 @@ import { getStateCallbacks } from 'colyseus.js';
 import { createRemoteRagdoll, RemoteRagdoll } from './remote-ragdoll.ts';
 import { POSE_PART_ORDER } from './ragdoll-proportions.ts';
 import { POSE_BYTES, POSE_FLOATS, decodePose } from './pose-codec.ts';
-import { clearPeerCooldown, type PeerSpeedInfo } from './collision.ts';
+import type { Collision, PeerSpeedInfo } from './collision.ts';
 import type { Confetti } from './confetti.ts';
 
 // Identity + score. Pose ships via room messages so we can timestamp +
@@ -86,6 +86,7 @@ export interface MultiplayerOptions {
   // Local ragdoll handle — needed so we can bridge the local player's
   // `kills` schema diff to the local kill-counter sprite.
   localRagdoll: { setKillCount(n: number): void };
+  collision: Collision;
 }
 
 const tmpQA = new THREE.Quaternion();
@@ -350,6 +351,7 @@ export class Multiplayer {
       state.color,
       state.name,
       this.opts.spawnHint,
+      this.opts.collision,
     );
     const pending = this.pending.get(sessionId) ?? [];
     this.pending.delete(sessionId);
@@ -375,7 +377,9 @@ export class Multiplayer {
     peer.ragdoll.dispose();
     this.peers.delete(sessionId);
     this.remoteHideUntil.delete(sessionId);
-    clearPeerCooldown(sessionId);
+    // ragdoll.dispose() already unregistered each collider handle; clearPeer
+    // belt-and-suspenders the cooldown and purges any handles dispose didn't.
+    this.opts.collision.clearPeer(sessionId);
   }
 }
 
