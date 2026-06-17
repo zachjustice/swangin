@@ -17,6 +17,7 @@ const FRAG = /* glsl */`
   precision highp float;
   varying vec3 vDir;
   uniform float uTime;
+  uniform vec3 uCloudBase;
 
   float hash3(vec3 p) {
     p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
@@ -68,7 +69,7 @@ const FRAG = /* glsl */`
     // clouds overhead, selling soft overhead light without dimming the scene.
     float lit = mix(0.82, 1.0, smoothstep(-0.1, 0.6, vDir.y));
     vec3 peak = vec3(0.92, 0.94, 0.96) * lit;
-    vec3 base = vec3(0.78, 0.84, 0.92);
+    vec3 base = uCloudBase;
     vec3 color = mix(base, peak, cloud);
     gl_FragColor = vec4(color, cloud * 0.28);
   }
@@ -76,6 +77,7 @@ const FRAG = /* glsl */`
 
 export interface CloudLayer {
   update(time: number): void;
+  setSkyTint(r: number, g: number, b: number): void;
   dispose(): void;
 }
 
@@ -85,7 +87,10 @@ export function createCloudLayer(scene: THREE.Scene): CloudLayer {
   const mat = new THREE.ShaderMaterial({
     vertexShader: VERT,
     fragmentShader: FRAG,
-    uniforms: { uTime: { value: 0 } },
+    uniforms: {
+      uTime: { value: 0 },
+      uCloudBase: { value: new THREE.Vector3(0.78, 0.84, 0.92) },
+    },
     transparent: true,
     depthWrite: false,
     side: THREE.BackSide,
@@ -95,6 +100,7 @@ export function createCloudLayer(scene: THREE.Scene): CloudLayer {
 
   return {
     update(time: number) { mat.uniforms.uTime.value = time; },
+    setSkyTint(r: number, g: number, b: number) { mat.uniforms.uCloudBase.value.set(r, g, b); },
     dispose() { scene.remove(mesh); geo.dispose(); mat.dispose(); },
   };
 }

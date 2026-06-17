@@ -12,7 +12,7 @@ import { CubeReticle } from './reticle.ts';
 import { Grapple } from './grapple.ts';
 import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
-import { createOrb } from './orb.ts';
+import { createOrb, ORB_RADIUS } from './orb.ts';
 import { createCloudLayer } from './sky-clouds.ts';
 import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS, MAX_RAGDOLL_BODY_SPEED } from './constants.ts';
 import * as collision from './collision.ts';
@@ -22,6 +22,23 @@ import { DevDummy } from './dev-dummy.ts';
 import { LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
 
 const SKY = 0x6b9bcc;
+
+const ROYGBIV = [
+  0x9b4040, // Red
+  0x9b6b40, // Orange
+  0x8b8b35, // Yellow
+  0x3a8a3a, // Green
+  0x6b9bcc, // Blue (default)
+  0x40409b, // Indigo
+  0x6b409b, // Violet
+];
+let skyIndex = 4;
+const skyFrom = new THREE.Color(SKY);
+const skyTo = new THREE.Color(SKY);
+const skyCurrent = new THREE.Color(SKY);
+let skyT = 1.0;
+const SKY_TRANSITION_DURATION = 1.5;
+
 const FIXED_DT = 1 / 60;
 const MAX_SUBSTEPS = 5;
 
@@ -30,6 +47,16 @@ const WORLD_HALF = 50;
 const POSE_SEND_HZ = 20;
 
 const prompt = document.getElementById('prompt') as HTMLDivElement;
+const skyColorInput = document.getElementById('sky-color') as HTMLInputElement;
+
+skyColorInput.addEventListener('input', () => {
+  skyT = 1.0;
+  skyCurrent.set(skyColorInput.value);
+  scene.background = skyCurrent;
+  (scene.fog as THREE.Fog).color.copy(skyCurrent);
+  hemiLight.color.copy(skyCurrent);
+  applyCloudTint(skyCurrent);
+});
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY);
@@ -63,7 +90,8 @@ labelRenderer.domElement.style.left = '0';
 labelRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(labelRenderer.domElement);
 
-scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.5));
+const hemiLight = new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.5);
+scene.add(hemiLight);
 
 // ambient lighting from everywhere
 const light = new THREE.AmbientLight(0xfff4e0, .65);
@@ -168,10 +196,20 @@ const lifecycle = new PlayerLifecycle({
   spawnPoint: SPAWN_POINT,
 });
 
+let wasInsideOrb = false;
+
 let userLabel = '…';
 const keys = { w: false, a: false, s: false, d: false, space: false, shiftLeft: false, shiftRight: false };
 let lastSpaceDownTime = -Infinity;
 let dashArmed = false;
+
+function applyCloudTint(color: THREE.Color) {
+  cloudLayer.setSkyTint(
+    0.6 + color.r * 0.4,
+    0.6 + color.g * 0.4,
+    0.6 + color.b * 0.4,
+  );
+}
 
 function updateReelMode(): void {
   if (!grapple.isActive) {
@@ -295,6 +333,32 @@ function tick() {
   lifecycle.tick(performance.now());
   checkRespawn();
   ragdoll.sync();
+
+  // Orb passage detection — trigger sky cycle on entry
+  {
+    const tp = ragdoll.torso.translation();
+    const distSq = tp.x * tp.x + tp.y * tp.y + tp.z * tp.z;
+    const insideOrb = distSq < ORB_RADIUS * ORB_RADIUS;
+    if (insideOrb && !wasInsideOrb) {
+      skyIndex = (skyIndex + 1) % ROYGBIV.length;
+      skyFrom.copy(skyCurrent);
+      skyTo.setHex(ROYGBIV[skyIndex]);
+      skyT = 0;
+    }
+    wasInsideOrb = insideOrb;
+  }
+
+  // Sky color transition
+  if (skyT < 1.0) {
+    skyT = Math.min(1.0, skyT + frameTime / SKY_TRANSITION_DURATION);
+    skyCurrent.lerpColors(skyFrom, skyTo, skyT);
+    scene.background = skyCurrent;
+    (scene.fog as THREE.Fog).color.copy(skyCurrent);
+    hemiLight.color.setHex(ROYGBIV[skyIndex]);
+    applyCloudTint(skyCurrent);
+    skyColorInput.value = '#' + skyCurrent.getHexString();
+  }
+
   grapple.update(frameTime);
   tpCamera.update(frameTime);
   reticle.update(camera);

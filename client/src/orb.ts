@@ -8,7 +8,7 @@ import * as THREE from 'three';
 // Animation is driven by roomTime so all clients see the same phase
 // (Multiplayer.roomTime is derived from the server-broadcast startedAt).
 
-const ORB_RADIUS = 1.5;
+export const ORB_RADIUS = 1.5;
 const COLOR_BLUE = new THREE.Color(0x9ecbff);   // light-blue
 const COLOR_PURPLE = new THREE.Color(0xc8a8ff); // light-purple
 

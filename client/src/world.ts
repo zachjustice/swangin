@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 
 // Locked world parameters (PLAN.md):
 //   20×20×20 lattice, cube edge a bit smaller than the player,
@@ -28,11 +29,12 @@ export interface LatticeBuild {
 
 // Deterministic — every client builds the identical world.
 export function buildLattice(scene: THREE.Scene, world: RAPIER.World): LatticeBuild {
-  const geometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+  // const geometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
+  const geometry = new RoundedBoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE, 4, 0.08)
   const material = new THREE.MeshStandardMaterial({
-    color: 0xc8c8c8,
-    roughness: 0.8,
-    metalness: 0.05,
+    color: 0xd9ddf9,
+    roughness: 0.5,
+    metalness: 0.3,
   });
 
   const mesh = new THREE.InstancedMesh(geometry, material, LATTICE_N ** 3);
