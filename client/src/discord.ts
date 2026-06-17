@@ -11,6 +11,7 @@ export interface DiscordUser {
 export interface DiscordSession {
   sdk: DiscordSDK;
   user: DiscordUser;
+  accessToken: string;
 }
 
 // Discord injects `frame_id`, `instance_id`, etc. as URL params when loading the
@@ -54,7 +55,7 @@ export async function initDiscord(): Promise<DiscordSession | null> {
   const auth = await sdk.commands.authenticate({ access_token });
   if (!auth) throw new Error('authenticate returned null');
 
-  return { sdk, user: auth.user as DiscordUser };
+  return { sdk, user: auth.user as DiscordUser, accessToken: access_token };
 }
 
 export function displayName(user: DiscordUser): string {

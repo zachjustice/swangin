@@ -79,9 +79,7 @@ export interface MultiplayerOptions {
   world: RAPIER.World;
   spawnHint: THREE.Vector3;
   channelId: string;
-  userId: string;
-  name: string;
-  color: number;
+  accessToken?: string;
   confetti: Confetti;
   // Local ragdoll handle — needed so we can bridge the local player's
   // `kills` schema diff to the local kill-counter sprite.
@@ -149,9 +147,7 @@ export class Multiplayer {
   async connect(): Promise<void> {
     const room = await this.client.joinOrCreate<RoomState>('swangin', {
       channelId: this.opts.channelId,
-      userId: this.opts.userId,
-      name: this.opts.name,
-      color: this.opts.color,
+      access_token: this.opts.accessToken,
     });
     this.room = room;
     this.mySessionId = room.sessionId;

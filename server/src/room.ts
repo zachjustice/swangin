@@ -4,9 +4,56 @@ import { TokenBucket } from './token-bucket.ts';
 
 interface JoinOptions {
   channelId?: string;
-  userId?: string;
-  name?: string;
-  color?: number;
+  access_token?: string;
+}
+
+interface DiscordAuthResult {
+  id: string;
+  name: string;
+}
+
+// Replicates THREE.Color.setHSL(hue/360, 0.7, 0.6).getHex() without the
+// THREE dependency, so the server derives the same color as the client.
+export function colorFromUserId(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash << 5) - hash + id.charCodeAt(i);
+    hash |= 0;
+  }
+  const hDeg = Math.abs(hash) % 360;
+  const h = hDeg / 360;
+  const s = 0.7;
+  const l = 0.6;
+  const p = l + s - l * s; // l > 0.5 branch
+  const q = 2 * l - p;
+  function hue2rgb(p: number, q: number, t: number): number {
+    if (t < 0) t += 1;
+    if (t > 1) t -= 1;
+    if (t < 1 / 6) return p + (q - p) * 6 * t;
+    if (t < 1 / 2) return q;
+    if (t < 2 / 3) return p + (q - p) * 6 * (2 / 3 - t);
+    return p;
+  }
+  const r = Math.round(hue2rgb(q, p, h + 1 / 3) * 255);
+  const g = Math.round(hue2rgb(q, p, h) * 255);
+  const b = Math.round(hue2rgb(q, p, h - 1 / 3) * 255);
+  return (r << 16) | (g << 8) | b;
+}
+
+// Exported for testing — accepts an optional fetcher so unit tests don't need
+// to patch globalThis.fetch.
+export async function verifyDiscordToken(
+  token: string,
+  fetcher: typeof fetch = globalThis.fetch,
+): Promise<DiscordAuthResult> {
+  const r = await fetcher('https://discord.com/api/users/@me', {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!r.ok) {
+    throw new Error(`Discord token rejected (${r.status})`);
+  }
+  const user = (await r.json()) as { id: string; global_name?: string | null; username: string };
+  return { id: user.id, name: user.global_name ?? user.username };
 }
 
 // Wire size of the binary pose payload. Kept in sync by hand with
@@ -129,11 +176,19 @@ export class SwanginRoom extends Room<SwanginState> {
     });
   }
 
-  override onJoin(client: Client, options: JoinOptions): void {
+  override async onAuth(_client: Client, options: JoinOptions): Promise<DiscordAuthResult> {
+    if (!options.access_token) {
+      // Standalone / dev mode — no Discord token; use session-derived anon identity.
+      return { id: `anon-${_client.sessionId}`, name: 'Anon' };
+    }
+    return verifyDiscordToken(options.access_token);
+  }
+
+  override onJoin(client: Client, _options: JoinOptions, auth: DiscordAuthResult): void {
     const p = new Player();
-    p.userId = options.userId ?? '';
-    p.name = options.name ?? 'Anon';
-    p.color = options.color ?? 0xffffff;
+    p.userId = auth.id;
+    p.name = auth.name;
+    p.color = colorFromUserId(auth.id);
     this.state.players.set(client.sessionId, p);
     console.log(`[room] join ${p.name} (${client.sessionId})`);
   }

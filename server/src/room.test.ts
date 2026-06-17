@@ -1,7 +1,7 @@
 import { describe, it, beforeEach } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { TokenBucket } from './token-bucket.ts';
-import { isPoseValid } from './room.ts';
+import { isPoseValid, colorFromUserId, verifyDiscordToken } from './room.ts';
 
 // ─── TokenBucket ────────────────────────────────────────────────────────────
 
@@ -131,5 +131,71 @@ describe('isPoseValid', () => {
     view.setFloat32(164, 0, true);
     view.setFloat32(168, 0, true);
     assert.equal(isPoseValid(buf), true);
+  });
+});
+
+// ─── colorFromUserId ──────────────────────────────────────────────────────────
+
+describe('colorFromUserId', () => {
+  it('returns a value in the valid hex range [0, 0xFFFFFF]', () => {
+    for (const id of ['', 'a', '123456789012345678', 'anon-abc']) {
+      const c = colorFromUserId(id);
+      assert.ok(c >= 0 && c <= 0xFFFFFF, `${id} → 0x${c.toString(16)} out of range`);
+    }
+  });
+
+  it('is deterministic for the same id', () => {
+    assert.equal(colorFromUserId('123456789012345678'), colorFromUserId('123456789012345678'));
+    assert.equal(colorFromUserId('anon-abc'), colorFromUserId('anon-abc'));
+  });
+
+  it('produces different colors for different ids', () => {
+    assert.notEqual(colorFromUserId('123456789012345678'), colorFromUserId('anon-abc'));
+  });
+
+  // Golden values pre-computed from the same algorithm to catch accidental drift.
+  it('matches expected value for a Discord snowflake id', () => {
+    assert.equal(colorFromUserId('123456789012345678'), 0xe0c652);
+  });
+
+  it('matches expected value for an anon id', () => {
+    assert.equal(colorFromUserId('anon-abc'), 0xe0527a);
+  });
+});
+
+// ─── verifyDiscordToken ───────────────────────────────────────────────────────
+
+function makeFetcher(status: number, body: unknown): typeof fetch {
+  return async (_url, _opts) =>
+    new Response(JSON.stringify(body), { status }) as Response;
+}
+
+describe('verifyDiscordToken', () => {
+  it('returns id and global_name on success', async () => {
+    const fetcher = makeFetcher(200, { id: '42', username: 'user#0', global_name: 'Real Name' });
+    const result = await verifyDiscordToken('valid-token', fetcher);
+    assert.deepEqual(result, { id: '42', name: 'Real Name' });
+  });
+
+  it('falls back to username when global_name is null', async () => {
+    const fetcher = makeFetcher(200, { id: '99', username: 'fallback', global_name: null });
+    const result = await verifyDiscordToken('valid-token', fetcher);
+    assert.deepEqual(result, { id: '99', name: 'fallback' });
+  });
+
+  it('throws on 401 (invalid / expired token)', async () => {
+    const fetcher = makeFetcher(401, { message: '401: Unauthorized' });
+    await assert.rejects(
+      () => verifyDiscordToken('bad-token', fetcher),
+      /Discord token rejected \(401\)/,
+    );
+  });
+
+  it('throws on 500 (Discord server error)', async () => {
+    const fetcher = makeFetcher(500, { message: 'internal server error' });
+    await assert.rejects(
+      () => verifyDiscordToken('token', fetcher),
+      /Discord token rejected \(500\)/,
+    );
   });
 });

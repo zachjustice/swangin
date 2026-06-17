@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import { initDiscord, displayName } from './discord.ts';
+import { initDiscord } from './discord.ts';
 import { buildLattice, addSpawnMarker, SPAWN_POINT } from './world.ts';
 import { createRagdoll } from './ragdoll.ts';
 import { ThirdPersonCamera } from './third-person-camera.ts';
@@ -57,7 +57,7 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.copy(SPAWN_POINT).add(new THREE.Vector3(6, 0, 6));
 camera.lookAt(0, 0, 0);
 
-const renderer = new THREE.WebGLRenderer({ antialias: false });
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
@@ -231,33 +231,37 @@ function applyMovementImpulse() {
 // knockback proportional to the actual approach.
 const preStepLocalVel = { x: 0, y: 0, z: 0 };
 
-// Collision context: rebuilt each drain call so multiplayer / lifecycle stay
-// fresh. cheap — just object literal allocation. The dev dummy is merged
-// into getPeer's lookup so the collision rule sees it the same way it sees
-// a real Colyseus peer.
+// Collision context: built once and mutated in place each substep. The hot
+// field (smoothedSpeed) is refreshed in collisionCtx() before every drain;
+// the closures bind `multiplayer` / `devDummy` / `confetti` via the outer
+// scope so a `multiplayer = new Multiplayer(...)` assignment after auth, or
+// later devDummy hookup, both still work without rebuilding the context.
+const collisionCtxObj: CollisionContext = {
+  localRagdoll: {
+    smoothedSpeed: 0,
+    torso: ragdoll.torso,
+    vel: preStepLocalVel,
+  },
+  lifecycle,
+  getPeer: (sid) => {
+    const real = multiplayer?.getPeer(sid);
+    if (real) return real;
+    if (devDummy && devDummy.sessionId === sid) return devDummy;
+    return undefined;
+  },
+  // Dummy-only callbacks: real peers move on their own machine and stream
+  // back, so they no-op when devDummy is unset.
+  onLocalFasterHit: (sid) => {
+    if (devDummy && sid === devDummy.sessionId) devDummy.onHit(confetti);
+  },
+  onPeerImpulse: (sid, impulse) => {
+    if (devDummy && sid === devDummy.sessionId) devDummy.kick(impulse);
+  },
+};
+
 function collisionCtx(): CollisionContext {
-  return {
-    localRagdoll: {
-      smoothedSpeed: ragdoll.smoothedSpeed,
-      torso: ragdoll.torso,
-      vel: preStepLocalVel,
-    },
-    lifecycle,
-    getPeer: (sid) => {
-      const real = multiplayer?.getPeer(sid);
-      if (real) return real;
-      if (devDummy && devDummy.sessionId === sid) return devDummy;
-      return undefined;
-    },
-    onLocalFasterHit: devDummy
-      ? (sid) => { if (devDummy && sid === devDummy.sessionId) devDummy.onHit(confetti); }
-      : undefined,
-    // Dummy-only: real peers move on their own machine and stream back, so
-    // we don't wire this for them.
-    onPeerImpulse: devDummy
-      ? (sid, impulse) => { if (devDummy && sid === devDummy.sessionId) devDummy.kick(impulse); }
-      : undefined,
-  };
+  collisionCtxObj.localRagdoll.smoothedSpeed = ragdoll.smoothedSpeed;
+  return collisionCtxObj;
 }
 
 // Frame-spike diagnostic. When wall time between frames exceeds SPIKE_MS,
@@ -429,14 +433,14 @@ playBtn.addEventListener('click', () => {
 tick();
 
 let userId = `standalone-${Math.random().toString(36).slice(2, 10)}`;
-let userName = 'Standalone';
 let channelId = 'standalone';
+let accessToken: string | undefined;
 try {
   const session = await initDiscord();
   if (session) {
     userId = session.user.id;
-    userName = displayName(session.user);
     channelId = session.sdk.channelId ?? 'no-channel';
+    accessToken = session.accessToken;
   }
 } catch (e) {
   console.error(e);
@@ -454,9 +458,7 @@ multiplayer = new Multiplayer({
   world,
   spawnHint: SPAWN_POINT,
   channelId,
-  userId,
-  name: userName,
-  color: myColor,
+  accessToken,
   confetti,
   localRagdoll: ragdoll,
   collision,
