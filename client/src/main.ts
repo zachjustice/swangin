@@ -22,6 +22,7 @@ import { DevDummy } from './dev-dummy.ts';
 import { LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
 
 const SKY = 0x6b9bcc;
+const SKY_ZENITH = 0x2a5cb8;
 
 const ROYGBIV = [
   0x9b4040, // Red
@@ -36,6 +37,7 @@ let skyIndex = 4;
 const skyFrom = new THREE.Color(SKY);
 const skyTo = new THREE.Color(SKY);
 const skyCurrent = new THREE.Color(SKY);
+const skyZenithCurrent = new THREE.Color(SKY_ZENITH);
 let skyT = 1.0;
 const SKY_TRANSITION_DURATION = 1.5;
 
@@ -47,15 +49,22 @@ const WORLD_HALF = 50;
 const POSE_SEND_HZ = 20;
 
 const prompt = document.getElementById('prompt') as HTMLDivElement;
-const skyColorInput = document.getElementById('sky-color') as HTMLInputElement;
+// Picker is optional — index.html may comment it out for production.
+const horizonInput = document.getElementById('sky-horizon') as HTMLInputElement | null;
+const zenithInput = document.getElementById('sky-zenith') as HTMLInputElement | null;
 
-skyColorInput.addEventListener('input', () => {
+horizonInput?.addEventListener('input', () => {
   skyT = 1.0;
-  skyCurrent.set(skyColorInput.value);
+  skyCurrent.set(horizonInput.value);
   scene.background = skyCurrent;
   (scene.fog as THREE.Fog).color.copy(skyCurrent);
-  hemiLight.color.copy(skyCurrent);
-  applyCloudTint(skyCurrent);
+  cloudLayer.setSkyColors(skyCurrent, skyZenithCurrent);
+});
+
+zenithInput?.addEventListener('input', () => {
+  skyZenithCurrent.set(zenithInput.value);
+  hemiLight.color.copy(skyZenithCurrent);
+  cloudLayer.setSkyColors(skyCurrent, skyZenithCurrent);
 });
 
 const scene = new THREE.Scene();
@@ -79,6 +88,7 @@ renderer.toneMappingExposure = 0.75;
 document.body.appendChild(renderer.domElement);
 
 const cloudLayer = createCloudLayer(scene);
+cloudLayer.setSkyColors(skyCurrent, skyZenithCurrent);
 
 // CSS2D layer for name labels — positioned absolutely over the WebGL canvas,
 // transparent and pointer-event-disabled so it doesn't intercept clicks.
@@ -91,6 +101,7 @@ labelRenderer.domElement.style.pointerEvents = 'none';
 document.body.appendChild(labelRenderer.domElement);
 
 const hemiLight = new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.5);
+hemiLight.color.copy(skyZenithCurrent);
 scene.add(hemiLight);
 
 // ambient lighting from everywhere
@@ -202,14 +213,6 @@ let userLabel = '…';
 const keys = { w: false, a: false, s: false, d: false, space: false, shiftLeft: false, shiftRight: false };
 let lastSpaceDownTime = -Infinity;
 let dashArmed = false;
-
-function applyCloudTint(color: THREE.Color) {
-  cloudLayer.setSkyTint(
-    0.6 + color.r * 0.4,
-    0.6 + color.g * 0.4,
-    0.6 + color.b * 0.4,
-  );
-}
 
 function updateReelMode(): void {
   if (!grapple.isActive) {
@@ -348,15 +351,15 @@ function tick() {
     wasInsideOrb = insideOrb;
   }
 
-  // Sky color transition
+  // Sky color transition — ROYGBIV cycles the horizon band only; the
+  // zenith stays at whatever the user picked.
   if (skyT < 1.0) {
     skyT = Math.min(1.0, skyT + frameTime / SKY_TRANSITION_DURATION);
     skyCurrent.lerpColors(skyFrom, skyTo, skyT);
     scene.background = skyCurrent;
     (scene.fog as THREE.Fog).color.copy(skyCurrent);
-    hemiLight.color.setHex(ROYGBIV[skyIndex]);
-    applyCloudTint(skyCurrent);
-    skyColorInput.value = '#' + skyCurrent.getHexString();
+    cloudLayer.setSkyColors(skyCurrent, skyZenithCurrent);
+    if (horizonInput) horizonInput.value = '#' + skyCurrent.getHexString();
   }
 
   grapple.update(frameTime);

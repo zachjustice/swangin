@@ -17,7 +17,8 @@ const FRAG = /* glsl */`
   precision highp float;
   varying vec3 vDir;
   uniform float uTime;
-  uniform vec3 uCloudBase;
+  uniform vec3 uSkyHorizon;
+  uniform vec3 uSkyZenith;
 
   float hash3(vec3 p) {
     p = fract(p * 0.3183099 + vec3(0.1, 0.2, 0.3));
@@ -49,6 +50,11 @@ const FRAG = /* glsl */`
   }
 
   void main() {
+    // Vertical sky gradient: horizon color near the equator,
+    // zenith color overhead. Softened so the band isn't a hard line.
+    float gradient = smoothstep(-0.05, 0.7, vDir.y);
+    vec3 sky = mix(uSkyHorizon, uSkyZenith, gradient);
+
     float scale = 5.0;
     vec3 p = vDir * scale + vec3(uTime * 0.018, 0.0, uTime * 0.009);
 
@@ -64,20 +70,20 @@ const FRAG = /* glsl */`
     cloud *= horizonFade;
 
     // Cloud peak softened off pure white so it stays well below the bloom
-    // threshold; base tint is the hazy sky color so thin wisps blend in.
-    // Underside shade: clouds near the horizon read slightly darker than
-    // clouds overhead, selling soft overhead light without dimming the scene.
+    // threshold. Underside shade: clouds near the horizon read slightly
+    // darker than clouds overhead, selling soft overhead light without
+    // dimming the scene.
     float lit = mix(0.82, 1.0, smoothstep(-0.1, 0.6, vDir.y));
     vec3 peak = vec3(0.92, 0.94, 0.96) * lit;
-    vec3 base = uCloudBase;
-    vec3 color = mix(base, peak, cloud);
-    gl_FragColor = vec4(color, cloud * 0.28);
+    // 0.28 keeps cloud intensity close to the prior transparent dome.
+    vec3 color = mix(sky, peak, cloud * 0.28);
+    gl_FragColor = vec4(color, 1.0);
   }
 `;
 
 export interface CloudLayer {
   update(time: number): void;
-  setSkyTint(r: number, g: number, b: number): void;
+  setSkyColors(horizon: THREE.Color, zenith: THREE.Color): void;
   dispose(): void;
 }
 
@@ -89,18 +95,23 @@ export function createCloudLayer(scene: THREE.Scene): CloudLayer {
     fragmentShader: FRAG,
     uniforms: {
       uTime: { value: 0 },
-      uCloudBase: { value: new THREE.Vector3(0.78, 0.84, 0.92) },
+      uSkyHorizon: { value: new THREE.Vector3(0.42, 0.61, 0.80) },
+      uSkyZenith: { value: new THREE.Vector3(0.16, 0.36, 0.72) },
     },
-    transparent: true,
     depthWrite: false,
     side: THREE.BackSide,
   });
   const mesh = new THREE.Mesh(geo, mat);
+  // Draw before opaque scene so close objects can overwrite it.
+  mesh.renderOrder = -1;
   scene.add(mesh);
 
   return {
     update(time: number) { mat.uniforms.uTime.value = time; },
-    setSkyTint(r: number, g: number, b: number) { mat.uniforms.uCloudBase.value.set(r, g, b); },
+    setSkyColors(horizon: THREE.Color, zenith: THREE.Color) {
+      mat.uniforms.uSkyHorizon.value.set(horizon.r, horizon.g, horizon.b);
+      mat.uniforms.uSkyZenith.value.set(zenith.r, zenith.g, zenith.b);
+    },
     dispose() { scene.remove(mesh); geo.dispose(); mat.dispose(); },
   };
 }
