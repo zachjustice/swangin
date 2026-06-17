@@ -103,9 +103,9 @@ export class Multiplayer {
   private startedAt = Date.now();
 
   constructor(private readonly opts: MultiplayerOptions) {
-    // Relative URL — Discord URL mapping /colyseus → server; Vite dev proxy
-    // does the same standalone.
-    this.client = new Colyseus.Client('/colyseus');
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const url = `${proto}://${location.host}/colyseus`;
+    this.client = new Colyseus.Client(url);
   }
 
   // Seconds since the room was created, derived from the server-broadcast
