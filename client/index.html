@@ -1,31 +1,155 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Swangin</title>
-    <style>
-      html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #0a1438; color: #e6ecff; font-family: ui-sans-serif, system-ui, sans-serif; }
-      canvas { display: block; }
-      #hud { position: fixed; inset: 0; pointer-events: none; }
-      #hud .reticle {
-        position: absolute; left: 50%; top: 50%;
-        width: 8px; height: 8px; margin: -4px 0 0 -4px;
-        border: 1px solid #e6ecff; border-radius: 50%; opacity: 0.85;
-      }
-      #hud .prompt {
-        position: absolute; bottom: 24px; left: 50%; transform: translateX(-50%);
-        padding: 8px 14px; background: rgba(10, 20, 56, 0.7);
-        border: 1px solid rgba(180, 200, 255, 0.25); border-radius: 8px;
-        font-size: 13px; pointer-events: auto; cursor: pointer;
-      }
-    </style>
-  </head>
-  <body>
-    <div id="hud">
-      <div class="reticle"></div>
-      <div class="prompt" id="prompt" hidden>Click to test pointer lock</div>
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Swangin</title>
+  <style>
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #0a1438;
+      color: #e6ecff;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #hud {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+
+    #hud .reticle {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 8px;
+      height: 8px;
+      margin: -4px 0 0 -4px;
+      border: 1px solid #e6ecff;
+      border-radius: 50%;
+      opacity: 0.85;
+    }
+
+    #hud .prompt {
+      position: absolute;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      padding: 8px 14px;
+      background: rgba(10, 20, 56, 0.7);
+      border: 1px solid rgba(180, 200, 255, 0.25);
+      border-radius: 8px;
+      font-size: 13px;
+      pointer-events: auto;
+      cursor: pointer;
+    }
+
+    #welcome-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(6, 12, 36, 0.82);
+      backdrop-filter: blur(6px);
+    }
+
+    #welcome-modal .card {
+      background: rgba(10, 20, 56, 0.92);
+      border: 1px solid rgba(180, 200, 255, 0.25);
+      border-radius: 14px;
+      padding: 36px 44px;
+      max-width: 420px;
+      width: 90%;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    #welcome-modal h1 {
+      margin: 0;
+      font-size: 24px;
+      font-weight: 700;
+      color: #e6ecff;
+      letter-spacing: 0.01em;
+    }
+
+    #welcome-modal .controls {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 14px;
+      color: #b4c8ff;
+      line-height: 1.6;
+    }
+
+    #welcome-modal .controls kbd {
+      display: inline-block;
+      padding: 1px 7px;
+      background: rgba(180, 200, 255, 0.12);
+      border: 1px solid rgba(180, 200, 255, 0.3);
+      border-radius: 5px;
+      font-size: 12px;
+      font-family: ui-monospace, monospace;
+      color: #e6ecff;
+      vertical-align: baseline;
+    }
+
+    #welcome-modal .tagline {
+      font-size: 13px;
+      color: #8aa0d8;
+      font-style: italic;
+      margin: 0;
+    }
+
+    #welcome-modal button {
+      align-self: flex-end;
+      padding: 10px 28px;
+      background: rgba(100, 140, 255, 0.18);
+      border: 1px solid rgba(180, 200, 255, 0.4);
+      border-radius: 8px;
+      color: #e6ecff;
+      font-size: 15px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+
+    #welcome-modal button:hover {
+      background: rgba(100, 140, 255, 0.32);
+    }
+  </style>
+</head>
+
+<body>
+  <div id="welcome-modal">
+    <div class="card">
+      <h1>Welcome to Swangin!</h1>
+      <div class="controls">
+        <div><kbd>LMB</kbd> &nbsp;Grapple</div>
+        <div><kbd>Space</kbd> &nbsp;Reel in grapple</div>
+        <div><kbd>Space</kbd> <kbd>Space</kbd> &nbsp;Reel in fast</div>
+        <div><kbd>Shift</kbd> &nbsp;Reel out grapple</div>
+      </div>
+      <p class="tagline">Tackle other players at lethal speeds to make slower players burst</p>
+      <button id="play-btn">Play</button>
     </div>
-    <script type="module" src="/src/main.ts"></script>
-  </body>
+  </div>
+  <div id="hud">
+    <div class="reticle"></div>
+    <div class="prompt" id="prompt" hidden>Click to test pointer lock</div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
 </html>

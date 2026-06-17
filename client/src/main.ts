@@ -14,7 +14,7 @@ import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
 import { createOrb } from './orb.ts';
 import { createCloudLayer } from './sky-clouds.ts';
-import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS } from './constants.ts';
+import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS, MAX_RAGDOLL_BODY_SPEED } from './constants.ts';
 import * as collision from './collision.ts';
 import { Confetti } from './confetti.ts';
 import { PlayerLifecycle } from './lifecycle.ts';
@@ -66,7 +66,7 @@ document.body.appendChild(labelRenderer.domElement);
 scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x5a6a8a, 0.5));
 
 // ambient lighting from everywhere
-const light = new THREE.AmbientLight(0xfff4e0, .6);
+const light = new THREE.AmbientLight(0xfff4e0, .65);
 scene.add(light);
 // a tasteful amount of shadows
 const dir = new THREE.DirectionalLight(0xfff4e0, 0.3);
@@ -101,6 +101,10 @@ await RAPIER.init();
 
 const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
 world.timestep = FIXED_DT;
+// 8 iterations vs the default 4 keeps joint constraints convergent at the
+// high velocities the grapple can produce. Paired with the per-body speed
+// cap in the substep loop below.
+world.numSolverIterations = 8;
 // Event queue for cross-player collision events. drained each substep by
 // collision.drain after world.step(eventQueue).
 const eventQueue = new RAPIER.EventQueue(true);
@@ -112,6 +116,8 @@ console.log(`[world] ${cubeCount} cubes built`);
 const orb = createOrb(scene, new THREE.Vector3(0, 0, 0));
 
 const ragdoll = createRagdoll(scene, world, SPAWN_POINT);
+let spawned = false;
+ragdoll.setVisible(false);
 
 const tpCamera = new ThirdPersonCamera(camera, renderer.domElement, ragdoll.torso);
 const reticle = new CubeReticle(scene, world);
@@ -185,6 +191,7 @@ let last = performance.now() / 1000;
 let accumulator = 0;
 
 function checkRespawn() {
+  if (!spawned) return;
   const t = ragdoll.torso.translation();
   const oob =
     t.y < RESPAWN_Y ||
@@ -256,6 +263,17 @@ function tick() {
   if (frameTime > 0.25) frameTime = 0.25;
   accumulator += frameTime;
 
+  if (!spawned) {
+    accumulator = 0;
+    cloudLayer.update(now);
+    orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);
+    multiplayer?.update(frameTime);
+    composer.render();
+    labelRenderer.render(scene, camera);
+    requestAnimationFrame(tick);
+    return;
+  }
+
   let steps = 0;
   while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
     ragdoll.motors.grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
@@ -264,6 +282,7 @@ function tick() {
     const v = ragdoll.torso.linvel();
     preStepLocalVel.x = v.x; preStepLocalVel.y = v.y; preStepLocalVel.z = v.z;
     world.step(eventQueue);
+    ragdoll.clampBodySpeeds(MAX_RAGDOLL_BODY_SPEED);
     collision.drain(eventQueue, collisionCtx());
     ragdoll.updateSpeed(FIXED_DT);
     accumulator -= FIXED_DT;
@@ -328,7 +347,7 @@ multiplayer = new Multiplayer({
 multiplayer.connect().then(() => {
   // Broadcast full ragdoll pose at 20 Hz; remotes interpolate ~100 ms in the past.
   setInterval(() => {
-    if (!multiplayer) return;
+    if (!multiplayer || !spawned) return;
     const grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
     multiplayer.sendPose(encodePose(
       ragdoll.poseBodies,
@@ -344,6 +363,16 @@ multiplayer.connect().then(() => {
 });
 
 prompt.hidden = true;
+
+const welcomeModal = document.getElementById('welcome-modal') as HTMLDivElement;
+const playBtn = document.getElementById('play-btn') as HTMLButtonElement;
+playBtn.addEventListener('click', () => {
+  spawned = true;
+  ragdoll.respawn(SPAWN_POINT);
+  ragdoll.setVisible(true);
+  welcomeModal.style.display = 'none';
+  tpCamera.lock();
+});
 
 renderer.domElement.addEventListener('click', () => {
   if (!tpCamera.isLocked) tpCamera.lock();
