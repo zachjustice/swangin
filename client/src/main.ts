@@ -295,6 +295,14 @@ function tick() {
     return;
   }
 
+  // Substep ordering invariant:
+  //   1. grapple.update() — advances reel, recreates joint, may release.
+  //      Must run before motors.update() so grappleAnchor reflects the
+  //      current frame's grapple state, not last frame's.
+  //   2. motors.update() + world.step() — physics substeps.
+  //   3. grapple.syncLine() — visual-only; must run after world.step() so
+  //      the rope endpoints match post-step body positions.
+  grapple.update(frameTime);
   let steps = 0;
   while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
     ragdoll.motors.grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
@@ -342,7 +350,7 @@ function tick() {
     if (horizonInput) horizonInput.value = '#' + skyCurrent.getHexString();
   }
 
-  grapple.update(frameTime);
+  grapple.syncLine();
   tpCamera.update(frameTime);
   reticle.update(camera);
   ragdoll.trail.update(frameTime);

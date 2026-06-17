@@ -130,7 +130,13 @@ export class Grapple {
       }
     }
 
-    // Update rope line visualization.
+    this.syncLine();
+  }
+
+  // Update rope line geometry to match current hand and anchor positions.
+  // Call once per frame AFTER world.step() so endpoints track post-step bodies.
+  syncLine(): void {
+    if (!this.anchorBody) return;
     this.handWorldPos(this.tmpHandWorld);
     const a = this.anchorBody.translation();
     this.lineGeom.setPositions([
