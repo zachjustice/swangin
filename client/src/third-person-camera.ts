@@ -13,6 +13,8 @@ export class ThirdPersonCamera {
 
   private readonly currentTarget = new THREE.Vector3();
   private locked = false;
+  private readonly onMouseMove: (e: MouseEvent) => void;
+  private readonly onPointerLockChange: () => void;
 
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
@@ -22,17 +24,24 @@ export class ThirdPersonCamera {
     const t = target.translation();
     this.currentTarget.set(t.x, t.y + this.heightOffset, t.z);
 
-    document.addEventListener('mousemove', (e) => {
+    this.onMouseMove = (e) => {
       if (!this.locked) return;
       this.yaw -= e.movementX * this.mouseSensitivity;
       this.pitch += e.movementY * this.mouseSensitivity;
       this.pitch = THREE.MathUtils.clamp(this.pitch, -PITCH_LIMIT, PITCH_LIMIT);
-    });
-    document.addEventListener('pointerlockchange', () => {
+    };
+    this.onPointerLockChange = () => {
       this.locked = document.pointerLockElement === domElement;
-    });
+    };
+    document.addEventListener('mousemove', this.onMouseMove);
+    document.addEventListener('pointerlockchange', this.onPointerLockChange);
 
     this.placeCameraImmediate();
+  }
+
+  dispose(): void {
+    document.removeEventListener('mousemove', this.onMouseMove);
+    document.removeEventListener('pointerlockchange', this.onPointerLockChange);
   }
 
   get isLocked(): boolean {

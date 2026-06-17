@@ -211,6 +211,7 @@ export class Multiplayer {
       };
       const peer = this.peers.get(sid);
       if (!peer) {
+        this.evictStalePending(arrive);
         let bucket = this.pending.get(sid);
         if (!bucket) { bucket = []; this.pending.set(sid, bucket); }
         bucket.push(env);
@@ -252,13 +253,7 @@ export class Multiplayer {
   // kinematic ragdoll. peerClockNow = now - peer.clockOffsetMs.
   update(dtSeconds = 1 / 60): void {
     const now = performance.now();
-    // Evict pending buckets whose last envelope is older than PENDING_TTL_MS
-    // so sessionIds that never get an onAdd don't accumulate indefinitely.
-    for (const [sid, bucket] of this.pending) {
-      if (bucket.length > 0 && now - bucket[bucket.length - 1].tArriveMs > PENDING_TTL_MS) {
-        this.pending.delete(sid);
-      }
-    }
+    this.evictStalePending(now);
     for (const [sid, peer] of this.peers) {
       // Trail ticks even if no pose arrived this frame so it fades cleanly
       // after a peer stops sending.
@@ -327,6 +322,17 @@ export class Multiplayer {
   // least-delayed sample is closest to true transit + skew. Subsequent
   // samples can only lower it; this is robust to sustained queueing delays
   // because one fast sample wins for the rest of the session.
+  // Drop pending buckets whose last envelope is older than PENDING_TTL_MS.
+  // Called from both the websocket callback and update() so the map stays
+  // bounded even if rAF is throttled (e.g. backgrounded tab).
+  private evictStalePending(now: number): void {
+    for (const [sid, bucket] of this.pending) {
+      if (bucket.length > 0 && now - bucket[bucket.length - 1].tArriveMs > PENDING_TTL_MS) {
+        this.pending.delete(sid);
+      }
+    }
+  }
+
   private ingestPose(peer: Peer, env: PoseEnvelope): void {
     const transit = env.tArriveMs - env.tSendMs;
     if (Number.isNaN(peer.clockOffsetMs) || transit < peer.clockOffsetMs) {
