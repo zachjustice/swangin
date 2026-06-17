@@ -75,22 +75,23 @@ export class SwanginRoom extends Room<SwanginState> {
       if (!data || typeof data.killerSessionId !== 'string') return;
       if (typeof data.x !== 'number' || typeof data.y !== 'number' || typeof data.z !== 'number') return;
 
+      // Reject self-kills.
+      if (data.killerSessionId === client.sessionId) return;
+
+      // Killer must be a currently-connected peer.
+      const killer = this.state.players.get(data.killerSessionId);
+      if (!killer) return;
+
+      const dedupKey = `${client.sessionId}:${data.killerSessionId}`;
       const now = Date.now();
-      const last = this.lastDeathAt.get(client.sessionId) ?? -Infinity;
+      const last = this.lastDeathAt.get(dedupKey) ?? -Infinity;
       if (now - last < SERVER_DEDUP_MS) return;
-      this.lastDeathAt.set(client.sessionId, now);
+      this.lastDeathAt.set(dedupKey, now);
 
       const victim = this.state.players.get(client.sessionId);
       if (!victim) return;
 
-      // Killer may have left mid-tumble. Still respawn the victim and
-      // broadcast confetti for the visual — just skip the kills++.
-      const killer = this.state.players.get(data.killerSessionId);
-      if (killer) {
-        killer.kills = Math.min(65535, killer.kills + 1);
-      } else {
-        console.log(`[room] died: killer ${data.killerSessionId} gone, no credit`);
-      }
+      killer.kills = Math.min(65535, killer.kills + 1);
       victim.kills = 0;
 
       this.broadcast('confetti', {
@@ -116,7 +117,12 @@ export class SwanginRoom extends Room<SwanginState> {
   override onLeave(client: Client): void {
     const p = this.state.players.get(client.sessionId);
     this.state.players.delete(client.sessionId);
-    this.lastDeathAt.delete(client.sessionId);
+    const id = client.sessionId;
+    for (const key of this.lastDeathAt.keys()) {
+      if (key.startsWith(`${id}:`) || key.endsWith(`:${id}`)) {
+        this.lastDeathAt.delete(key);
+      }
+    }
     if (p) console.log(`[room] leave ${p.name} (${client.sessionId})`);
   }
 }
