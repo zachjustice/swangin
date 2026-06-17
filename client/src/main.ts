@@ -1,9 +1,6 @@
 import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { initDiscord, displayName } from './discord.ts';
 import { buildLattice, addSpawnMarker, SPAWN_POINT } from './world.ts';
 import { createRagdoll } from './ragdoll.ts';
@@ -60,8 +57,8 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.copy(SPAWN_POINT).add(new THREE.Vector3(6, 0, 6));
 camera.lookAt(0, 0, 0);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(window.devicePixelRatio);
+const renderer = new THREE.WebGLRenderer({ antialias: false });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
 renderer.toneMappingExposure = 0.75;
@@ -92,27 +89,10 @@ const dir = new THREE.DirectionalLight(0xfff4e0, 0.3);
 dir.position.set(0, 18, 0);
 scene.add(dir);
 
-// EffectComposer pipeline: scene render → UnrealBloomPass. Composer owns final
-// blit to screen; CSS2DRenderer stays a separate DOM overlay so labels render
-// crisp without going through bloom.
-const composer = new EffectComposer(renderer);
-composer.setPixelRatio(window.devicePixelRatio);
-composer.setSize(window.innerWidth, window.innerHeight);
-composer.addPass(new RenderPass(scene, camera));
-// strength, radius, threshold — only pixels above ~0.85 luminance bloom, so
-// the orb fragment shader's 1.6× multiplier and rim boost are what bleed.
-const bloomPass = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.45, 0.4, 0.99,
-);
-composer.addPass(bloomPass);
-
 window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setSize(window.innerWidth, window.innerHeight);
-  bloomPass.setSize(window.innerWidth, window.innerHeight);
   labelRenderer.setSize(window.innerWidth, window.innerHeight);
 });
 
@@ -154,11 +134,6 @@ let devSpeedHud: HTMLDivElement | null = null;
 let perfHud: PerfHud | null = null;
 if (import.meta.env.DEV) {
   perfHud = new PerfHud();
-  const halfExtent = CUBE_SIZE / 2;
-  const attach = new THREE.Vector3(0, LATTICE_TOP_Y - halfExtent, 0);
-  devDummy = new DevDummy(scene, world, collision, attach, 6, 0xff3366, 'Dummy');
-  console.log('[dev] dummy hung at', attach.toArray());
-
   devSpeedHud = document.createElement('div');
   devSpeedHud.style.cssText = [
     'position: fixed',
@@ -285,8 +260,15 @@ function collisionCtx(): CollisionContext {
   };
 }
 
+// Frame-spike diagnostic. When wall time between frames exceeds SPIKE_MS,
+// dump a per-phase breakdown to console so we can see which section spiked.
+const SPIKE_MS = 33; // anything over ~2 vsync at 60Hz
+const __t = { grap: 0, phys: 0, sky: 0, scene: 0, mp: 0, fx: 0, render: 0, steps: 0 };
+function __mark() { return performance.now(); }
+
 function tick() {
-  const now = performance.now() / 1000;
+  const frameStartMs = performance.now();
+  const now = frameStartMs / 1000;
   let frameTime = now - last;
   last = now;
   // Sample BEFORE the 0.25s clamp so the HUD reports real stalls instead of
@@ -300,7 +282,7 @@ function tick() {
     cloudLayer.update(now);
     orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);
     multiplayer?.update(frameTime);
-    composer.render();
+    renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
     requestAnimationFrame(tick);
     return;
@@ -313,7 +295,9 @@ function tick() {
   //   2. motors.update() + world.step() — physics substeps.
   //   3. grapple.syncLine() — visual-only; must run after world.step() so
   //      the rope endpoints match post-step body positions.
+  let __m = __mark();
   grapple.update(frameTime);
+  __t.grap = __mark() - __m; __m = __mark();
   let steps = 0;
   while (accumulator >= FIXED_DT && steps < MAX_SUBSTEPS) {
     ragdoll.motors.grappleAnchor = grapple.isActive ? grapple.anchorPos : null;
@@ -346,6 +330,7 @@ function tick() {
     // Don't carry over a stale send tick if we just clamped — fresh start next frame.
     sendAccumulator = 0;
   }
+  __t.phys = __mark() - __m; __t.steps = steps; __m = __mark();
 
   cloudLayer.update(now);
 
@@ -378,18 +363,38 @@ function tick() {
     if (horizonInput) horizonInput.value = '#' + skyCurrent.getHexString();
   }
 
+  __t.sky = __mark() - __m; __m = __mark();
+
   grapple.syncLine();
   tpCamera.update(frameTime);
   reticle.update(camera);
   ragdoll.trail.update(frameTime);
+  __t.scene = __mark() - __m; __m = __mark();
+
   multiplayer?.update(frameTime);
+  __t.mp = __mark() - __m; __m = __mark();
+
   devDummy?.update(performance.now(), frameTime);
   if (devSpeedHud) devSpeedHud.textContent = `${ragdoll.smoothedSpeed.toFixed(1)} m/s`;
   orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);
   confetti.update(frameTime);
+  __t.fx = __mark() - __m; __m = __mark();
 
-  composer.render();
+  renderer.render(scene, camera);
   labelRenderer.render(scene, camera);
+  __t.render = __mark() - __m;
+
+  const frameMs = performance.now() - frameStartMs;
+  const wallMs = frameTime * 1000;
+  if (wallMs > SPIKE_MS) {
+    const fmt = (n: number) => n.toFixed(1);
+    console.warn(
+      `[spike] wall=${fmt(wallMs)}ms js=${fmt(frameMs)}ms steps=${__t.steps} | ` +
+      `grap=${fmt(__t.grap)} phys=${fmt(__t.phys)} sky=${fmt(__t.sky)} ` +
+      `scene=${fmt(__t.scene)} mp=${fmt(__t.mp)} fx=${fmt(__t.fx)} render=${fmt(__t.render)}`
+    );
+  }
+
   requestAnimationFrame(tick);
 }
 tick();

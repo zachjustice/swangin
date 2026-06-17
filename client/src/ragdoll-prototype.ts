@@ -779,7 +779,7 @@ try {
       savedCameraRestored = true;
     }
   }
-} catch {}
+} catch { }
 
 let camSaveTimer: number | undefined;
 controls.addEventListener('change', () => {
@@ -790,7 +790,7 @@ controls.addEventListener('change', () => {
         position: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
         target: { x: controls.target.x, y: controls.target.y, z: controls.target.z },
       }));
-    } catch {}
+    } catch { }
   }, 200);
 });
 
@@ -1345,14 +1345,14 @@ const tabSimulator = document.getElementById('tab-simulator')!;
 tabPrototype.addEventListener('click', () => {
   tabPrototype.classList.add('active');
   tabSimulator.classList.remove('active');
-  try { localStorage.setItem(LS_TAB, 'prototype'); } catch {}
+  try { localStorage.setItem(LS_TAB, 'prototype'); } catch { }
   switchToPrototype();
 });
 
 tabSimulator.addEventListener('click', () => {
   tabPrototype.classList.remove('active');
   tabSimulator.classList.add('active');
-  try { localStorage.setItem(LS_TAB, 'simulator'); } catch {}
+  try { localStorage.setItem(LS_TAB, 'simulator'); } catch { }
   switchToSimulator();
 });
 
@@ -1363,4 +1363,4 @@ try {
   if (localStorage.getItem(LS_TAB) === 'simulator') {
     tabSimulator.click();
   }
-} catch {}
+} catch { }
