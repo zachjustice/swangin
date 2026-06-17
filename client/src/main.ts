@@ -28,7 +28,6 @@ const skyCurrent = new THREE.Color(SKY);
 const skyZenithCurrent = new THREE.Color(SKY_ZENITH);
 let skyT = 1.0;
 
-const prompt = document.getElementById('prompt') as HTMLDivElement;
 // Picker is optional — index.html may comment it out for production.
 const horizonInput = document.getElementById('sky-horizon') as HTMLInputElement | null;
 const zenithInput = document.getElementById('sky-zenith') as HTMLInputElement | null;
@@ -189,7 +188,6 @@ const lifecycle = new PlayerLifecycle({
 
 let wasInsideOrb = false;
 
-let userLabel = '…';
 const keys = { w: false, a: false, s: false, d: false, space: false, shiftLeft: false, shiftRight: false };
 let lastSpaceDownTime = -Infinity;
 let dashArmed = false;
@@ -375,12 +373,8 @@ try {
     userId = session.user.id;
     userName = displayName(session.user);
     channelId = session.sdk.channelId ?? 'no-channel';
-    userLabel = `Hello, ${userName}`;
-  } else {
-    userLabel = 'Standalone';
   }
 } catch (e) {
-  userLabel = `Auth failed: ${String(e)}`;
   console.error(e);
 }
 
@@ -414,10 +408,7 @@ multiplayer.connect().then(() => {
   }, Math.round(1000 / POSE_SEND_HZ));
 }).catch((err) => {
   console.error('[mp] failed to join room', err);
-  userLabel = `${userLabel} · MP failed`;
 });
-
-prompt.hidden = true;
 
 const welcomeModal = document.getElementById('welcome-modal') as HTMLDivElement;
 const playBtn = document.getElementById('play-btn') as HTMLButtonElement;

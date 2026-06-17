@@ -3,7 +3,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server } from 'colyseus';
 import { WebSocketTransport } from '@colyseus/ws-transport';
-import { SwanginRoom } from './room.js';
+import { SwanginRoom } from './room.ts';
 
 const PORT = Number(process.env.PORT ?? 3001);
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID;

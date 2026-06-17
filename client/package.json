@@ -17,7 +17,7 @@
   "devDependencies": {
     "@robojs/patch": "^0.2.1",
     "@types/three": "^0.184.1",
-    "typescript": "^6.0.3",
+    "typescript": "~5.6",
     "vite": "^8.0.16"
   }
 }

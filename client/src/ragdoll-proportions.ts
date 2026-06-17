@@ -222,14 +222,6 @@ export interface ResolvedProportions {
   thigh:    { front: Profile; side: Profile; halfLen: number; radius: number };
   shin:     { front: Profile; side: Profile; halfLen: number; radius: number };
 
-  // Seam cross-section radii — old joint-ball ellipsoid sizing (kept for the
-  // prototype's inline rest-pose preview); the new SkinnedMesh factory infers
-  // them from the profiles directly.
-  elbowFrontRadius: number;
-  elbowSideRadius: number;
-  kneeFrontRadius: number;
-  kneeSideRadius: number;
-
   hipOffsetY: number;
   shoulderOffsetX: number;
   shoulderOffsetY: number;
@@ -295,11 +287,6 @@ export function resolveProportions(cfg: RagdollConfig): ResolvedProportions {
     thigh:    { front: thigh.front,    side: thigh.side,    halfLen: thighHalfLen,    radius: thighRadius },
     shin:     { front: shin.front,     side: shin.side,     halfLen: shinHalfLen,     radius: shinRadius },
 
-    elbowSideRadius:  upperArm.side [upperArm.side.length - 1][0],
-    elbowFrontRadius: upperArm.front[upperArm.front.length - 1][0],
-    kneeSideRadius:   thigh.side    [thigh.side.length - 1][0],
-    kneeFrontRadius:  thigh.front   [thigh.front.length - 1][0],
-
     hipOffsetY: cfg.hipOffsetY,
     shoulderOffsetX: torsoRadius + armUpperRadius + cfg.shoulderGapX,
     shoulderOffsetY: cfg.shoulderOffsetY,
@@ -354,11 +341,6 @@ export const SHIN_RADIUS = PROPORTIONS.shin.radius;
 
 export const ARM_RADIUS = Math.max(ARM_UPPER_RADIUS, ARM_LOWER_RADIUS);
 
-export const ELBOW_SIDE_RADIUS = PROPORTIONS.elbowSideRadius;
-export const ELBOW_FRONT_RADIUS = PROPORTIONS.elbowFrontRadius;
-export const KNEE_SIDE_RADIUS = PROPORTIONS.kneeSideRadius;
-export const KNEE_FRONT_RADIUS = PROPORTIONS.kneeFrontRadius;
-
 export const HEAD_OFFSET_Y = PROPORTIONS.headOffsetY;
 export const HIP_OFFSET_Y = PROPORTIONS.hipOffsetY;
 export const SHOULDER_OFFSET_X = PROPORTIONS.shoulderOffsetX;
@@ -403,3 +385,24 @@ export const FOOT_LOCAL_Y = PROPORTIONS.footLocalY;
 // Place the foot so its back face aligns with the back of the shin
 // (z = -SHIN_RADIUS): footCenterZ - footHalfDepth = -SHIN_RADIUS.
 export const FOOT_LOCAL_Z = PROPORTIONS.footLocalZ;
+
+const _ph = CONFIG.physics;
+export const BODY_LINEAR_DAMPING = _ph.bodyLinearDamping;
+export const BODY_ANGULAR_DAMPING_TORSO = _ph.bodyAngularDampingTorso;
+export const BODY_ANGULAR_DAMPING_LIMB = _ph.bodyAngularDampingLimb;
+export const COLLIDER_FRICTION = _ph.colliderFriction;
+export const TORSO_RIGHTING_ENABLED = _ph.torsoRightingEnabled;
+export const TORSO_RIGHTING_KP = _ph.torsoRightingKp;
+export const TORSO_RIGHTING_KD = _ph.torsoRightingKd;
+export const GRAPPLE_REACH_IMPULSE_ENABLED = _ph.grappleReachImpulseEnabled;
+export const GRAPPLE_REACH_IMPULSE_STRENGTH = _ph.grappleReachImpulseStrength;
+export const SHOULDER_KP = _ph.shoulderKp;
+export const SHOULDER_KD = _ph.shoulderKd;
+export const ELBOW_KP = _ph.elbowKp;
+export const ELBOW_KD = _ph.elbowKd;
+export const HIP_KP = _ph.hipKp;
+export const HIP_KD = _ph.hipKd;
+export const KNEE_KP = _ph.kneeKp;
+export const KNEE_KD = _ph.kneeKd;
+export const NECK_KP = _ph.neckKp;
+export const NECK_KD = _ph.neckKd;

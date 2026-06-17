@@ -1,5 +1,4 @@
 import * as THREE from 'three';
-import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // Shared helpers for the body-part silhouettes (torso + 4 limb segments). Each
 // part is an elliptical sweep along Y with semi-axes (xR, zR) sourced from two
@@ -90,54 +89,6 @@ export function sampleSplineAtY(samples: THREE.Vector2[], y: number): number {
     }
   }
   return y > samples[0].y ? samples[0].x : samples[samples.length - 1].x;
-}
-
-// Build the triangulated elliptical sweep mesh. Winding is (a, c, b)/(b, c, d)
-// — outward normals under default backface culling. Apex rows (radius=0)
-// produce a few zero-area degenerate triangles; computeVertexNormals handles
-// those gracefully so the cap lighting still reads.
-export function buildSweepGeometry(
-  front: Profile,
-  side: Profile,
-  radialSegs: number,
-): THREE.BufferGeometry {
-  const N = Math.min(front.length, side.length);
-  const M = radialSegs;
-  const positions = new Float32Array(N * (M + 1) * 3);
-  for (let i = 0; i < N; i++) {
-    const xR = front[i][0];
-    const zR = side[i][0];
-    const y  = side[i][1];
-    const rowBase = i * (M + 1);
-    for (let j = 0; j <= M; j++) {
-      const a = (j / M) * Math.PI * 2;
-      const off = (rowBase + j) * 3;
-      positions[off + 0] = xR * Math.cos(a);
-      positions[off + 1] = y;
-      positions[off + 2] = zR * Math.sin(a);
-    }
-  }
-  const indices: number[] = [];
-  for (let i = 0; i < N - 1; i++) {
-    for (let j = 0; j < M; j++) {
-      const a = i * (M + 1) + j;
-      const b = a + (M + 1);
-      const c = a + 1;
-      const d = b + 1;
-      indices.push(a, c, b);
-      indices.push(b, c, d);
-    }
-  }
-  const geom = new THREE.BufferGeometry();
-  geom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-  geom.setIndex(indices);
-  // Merge coincident apex vertices (radius=0 rings collapse to a single point,
-  // but every ring vert is emitted as a distinct duplicate). After merge each
-  // apex is one shared vertex whose normal is the average of all M fan
-  // triangles — gives a smooth rounded dome instead of a faceted point.
-  const merged = mergeVertices(geom, 1e-6);
-  merged.computeVertexNormals();
-  return merged;
 }
 
 // Half-length of a sweep part = (yTop - yBot) / 2 of its profile. The physics

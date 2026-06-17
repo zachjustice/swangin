@@ -1,5 +1,5 @@
 import { Room, Client } from 'colyseus';
-import { Player, SwanginState } from './schema.js';
+import { Player, SwanginState } from './schema.ts';
 
 interface JoinOptions {
   channelId?: string;

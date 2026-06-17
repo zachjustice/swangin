@@ -10,8 +10,6 @@ import {
   STIFFNESS_GAP,
   MATERIAL,
   POSE_PART_ORDER, PosePart, PART_SHAPES, HAND_LOCAL_Y,
-} from './ragdoll-proportions.ts';
-import {
   BODY_ANGULAR_DAMPING_TORSO, BODY_ANGULAR_DAMPING_LIMB, BODY_LINEAR_DAMPING,
   COLLIDER_FRICTION,
   SHOULDER_KP, SHOULDER_KD,
@@ -19,7 +17,7 @@ import {
   HIP_KP, HIP_KD,
   KNEE_KP, KNEE_KD,
   NECK_KP, NECK_KD,
-} from './ragdoll-tuning.ts';
+} from './ragdoll-proportions.ts';
 import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 import { registerCollider, unregisterCollider } from './collision.ts';
 import { createKillCounter, type KillCounter } from './kill-counter.ts';

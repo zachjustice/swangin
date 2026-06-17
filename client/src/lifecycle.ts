@@ -19,7 +19,7 @@ import {
 // `forceRespawn()` is the path for OOB falls and the R-key — no death credit,
 // no `died` message, just a respawn-to-protect transition.
 
-export type LifecycleState = 'ALIVE' | 'DYING_TUMBLE' | 'SPAWN_PROTECT';
+type LifecycleState = 'ALIVE' | 'DYING_TUMBLE' | 'SPAWN_PROTECT';
 
 export interface LifecycleDeps {
   ragdoll: {

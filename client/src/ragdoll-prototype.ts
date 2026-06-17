@@ -141,10 +141,6 @@ function buildRagdoll(c: Config): PrototypeRagdoll {
   };
 }
 
-function disposeRagdoll(r: PrototypeRagdoll) {
-  r.dispose();
-}
-
 // ---------- UI ----------
 
 const panel = document.getElementById('panel')!;
@@ -808,7 +804,7 @@ scene.add(current.root);
 
 function rebuild() {
   scene.remove(current.root);
-  disposeRagdoll(current);
+  current.dispose();
   current = buildRagdoll(config);
   scene.add(current.root);
 }

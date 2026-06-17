@@ -3,7 +3,7 @@ import RAPIER from '@dimforge/rapier3d-compat';
 import {
   TORSO_RIGHTING_ENABLED, TORSO_RIGHTING_KP, TORSO_RIGHTING_KD,
   GRAPPLE_REACH_IMPULSE_ENABLED, GRAPPLE_REACH_IMPULSE_STRENGTH,
-} from './ragdoll-tuning.ts';
+} from './ragdoll-proportions.ts';
 
 // Mannequin-recovery PD: each registered joint pulls a child body toward
 // a rest-relative orientation against its parent (captured at construction
