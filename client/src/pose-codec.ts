@@ -45,8 +45,9 @@ export const POSE_BYTES = 172;
 const POS_RANGE = 2.0;
 const POS_SCALE = 32767 / POS_RANGE;
 
-// Velocity / speed ranges. MAX_RAGDOLL_BODY_SPEED caps body speed at 30 m/s,
-// so ±100 m/s covers transient impulse spikes with plenty of headroom.
+// Velocity / speed ranges. ±100 m/s covers transient impulse spikes with
+// plenty of headroom over realistic ragdoll speeds (pendulum max for a 40 m
+// rope is √(2·g·40) ≈ 28 m/s).
 const VEL_RANGE = 100.0;
 const VEL_SCALE = 32767 / VEL_RANGE;
 const SPEED_RANGE = 100.0;

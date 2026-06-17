@@ -12,11 +12,6 @@ export const GRAPPLE_COLOR = new THREE.Color(GRAPPLE_COLOR_HEX).multiplyScalar(G
 
 export const MOVE_IMPULSE = 1.5;   // impulse per physics substep (N·s)
 export const MOVE_MAX_SPEED = 15.0; // horizontal speed cap (m/s)
-// Hard per-body speed ceiling applied after each world.step(). Prevents
-// the grapple rope from accelerating bodies past the point where Rapier's
-// joint solver can hold the ragdoll together (spaghetti at ~40 m/s).
-// 30 m/s is just above the pendulum max for a 40 m rope (√(2·g·40) ≈ 28 m/s).
-export const MAX_RAGDOLL_BODY_SPEED = 30.0;
 
 // --- Player–player collision ---
 // On contact between a local-ragdoll part and a remote-ragdoll part, the

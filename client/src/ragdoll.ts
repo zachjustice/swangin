@@ -83,9 +83,6 @@ export interface Ragdoll {
   setVisible(v: boolean): void;
   setKillCount(n: number): void;
   linvel(): { x: number; y: number; z: number };
-  // Clamp every body's linear speed to `max` m/s. Called after world.step()
-  // to prevent grapple acceleration from reaching the joint-solver blow-up range.
-  clampBodySpeeds(max: number): void;
   // Pale-white "air lines" trailing limb extremities above kill speed.
   // Tick from the render loop with seconds-since-last-frame.
   trail: SpeedTrail;
@@ -382,18 +379,6 @@ export function createRagdoll(
     return torso.body.linvel();
   }
 
-  function clampBodySpeeds(max: number) {
-    const maxSq = max * max;
-    for (const p of parts) {
-      const v = p.body.linvel();
-      const sq = v.x * v.x + v.y * v.y + v.z * v.z;
-      if (sq > maxSq) {
-        const s = max / Math.sqrt(sq);
-        p.body.setLinvel({ x: v.x * s, y: v.y * s, z: v.z * s }, true);
-      }
-    }
-  }
-
   cachePrevForInterp();
   sync(0);
 
@@ -455,7 +440,6 @@ export function createRagdoll(
     setVisible,
     setKillCount,
     linvel,
-    clampBodySpeeds,
     trail,
     dispose,
   };

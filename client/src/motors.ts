@@ -5,6 +5,14 @@ import {
   GRAPPLE_REACH_IMPULSE_ENABLED, GRAPPLE_REACH_IMPULSE_STRENGTH,
 } from './ragdoll-proportions.ts';
 
+// Per-substep, per-body cap on any LINEAR impulse a motor applies. Prevents
+// runaway grapple-reach acceleration from outpacing the joint solver
+// (which historically required a post-step body-speed clamp that violated
+// rope length and caused visible snap-back). With the cap applied before
+// world.step(), the solver projects velocities consistently across the
+// constraint graph and joints stay coherent.
+const MAX_MOTOR_LINEAR_IMPULSE = 1.0;
+
 // Mannequin-recovery PD: each registered joint pulls a child body toward
 // a rest-relative orientation against its parent (captured at construction
 // time, so respawn lands at zero error). Weak enough that gravity wins on
@@ -186,7 +194,8 @@ export class RagdollMotors {
     this.tmpReach.multiplyScalar(1 / Math.sqrt(lenSq));
 
     const m = this.grappleArm.mass();
-    const k = GRAPPLE_REACH_IMPULSE_STRENGTH * g * m;
+    let k = GRAPPLE_REACH_IMPULSE_STRENGTH * g * m;
+    if (k > MAX_MOTOR_LINEAR_IMPULSE) k = MAX_MOTOR_LINEAR_IMPULSE;
     this.grappleArm.applyImpulse(
       { x: this.tmpReach.x * k, y: this.tmpReach.y * k, z: this.tmpReach.z * k },
       true,

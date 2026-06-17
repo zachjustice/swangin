@@ -11,7 +11,7 @@ import { Multiplayer, colorFromUserId } from './multiplayer.ts';
 import { encodePose } from './pose-codec.ts';
 import { createOrb, ORB_RADIUS } from './orb.ts';
 import { createCloudLayer } from './sky-clouds.ts';
-import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS, MAX_RAGDOLL_BODY_SPEED, SKY, SKY_ZENITH, ROYGBIV, SKY_TRANSITION_DURATION, FIXED_DT, MAX_SUBSTEPS, RESPAWN_Y, WORLD_HALF, POSE_SEND_HZ } from './constants.ts';
+import { MOVE_IMPULSE, MOVE_MAX_SPEED, GRAPPLE_REEL_DOUBLE_TAP_MS, SKY, SKY_ZENITH, ROYGBIV, SKY_TRANSITION_DURATION, FIXED_DT, MAX_SUBSTEPS, RESPAWN_Y, WORLD_HALF, POSE_SEND_HZ } from './constants.ts';
 import { Collision, type CollisionContext } from './collision.ts';
 import { Confetti } from './confetti.ts';
 import { PlayerLifecycle } from './lifecycle.ts';
@@ -315,7 +315,6 @@ function tick() {
     ragdoll.cachePrevForInterp();
     if (grapple.isActive) grapple.cachePrevForInterp();
     world.step(eventQueue);
-    ragdoll.clampBodySpeeds(MAX_RAGDOLL_BODY_SPEED);
     collision.drain(eventQueue, collisionCtx());
     ragdoll.updateSpeed(FIXED_DT);
     accumulator -= FIXED_DT;
