@@ -819,9 +819,20 @@ window.addEventListener('resize', () => {
   renderer.setSize(w, h);
 });
 
+// Headless screenshot API — driven by scripts/screenshot-prototype.mjs via Playwright
+(window as any).__prototype = {
+  ready: false,
+  setCamera(pos: { x: number; y: number; z: number }, target: { x: number; y: number; z: number }) {
+    camera.position.set(pos.x, pos.y, pos.z);
+    controls.target.set(target.x, target.y, target.z);
+    controls.update();
+  },
+};
+
 let prototypeAnimId: number;
 function animatePrototype() {
   prototypeAnimId = requestAnimationFrame(animatePrototype);
+  if (!(window as any).__prototype.ready) (window as any).__prototype.ready = true;
   controls.update();
   renderer.render(scene, camera);
 }
