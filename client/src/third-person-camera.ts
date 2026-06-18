@@ -23,7 +23,7 @@ export class ThirdPersonCamera {
   constructor(
     private readonly camera: THREE.PerspectiveCamera,
     private readonly domElement: HTMLElement,
-    target: RAPIER.RigidBody,
+    private readonly target: RAPIER.RigidBody,
   ) {
     const t = target.translation();
     this.currentTarget.set(t.x, t.y + this.heightOffset, t.z);
@@ -54,6 +54,22 @@ export class ThirdPersonCamera {
 
   lock(): void {
     this.domElement.requestPointerLock();
+  }
+
+  // Aim the camera so its forward axis passes through `worldPoint`. Used at
+  // spawn to face the orb instead of staring down +Z.
+  pointAt(worldPoint: THREE.Vector3): void {
+    const t = this.target.translation();
+    this.currentTarget.set(t.x, t.y + this.heightOffset, t.z);
+    const dx = worldPoint.x - this.currentTarget.x;
+    const dy = worldPoint.y - this.currentTarget.y;
+    const dz = worldPoint.z - this.currentTarget.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (len < 1e-6) return;
+    const nx = dx / len, ny = dy / len, nz = dz / len;
+    this.pitch = THREE.MathUtils.clamp(Math.asin(-ny), -PITCH_LIMIT, PITCH_LIMIT);
+    this.yaw = Math.atan2(-nx, -nz);
+    this.placeCameraImmediate();
   }
 
   // `targetPos` is the interpolated world position to follow. main.ts feeds

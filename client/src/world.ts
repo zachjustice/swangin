@@ -7,8 +7,8 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 //   pitch 3–4× cube size, central spherical pocket carved.
 export const LATTICE_N = 5;
 export const CUBE_SIZE = 0.8;
-export const LATTICE_PITCH = 5.0;
-export const POCKET_RADIUS = 5.5;
+export const LATTICE_PITCH = 10.0;
+export const POCKET_RADIUS = LATTICE_PITCH * 1.1;
 
 // Top of the topmost cube along +Y; spawn sits 5 above this. Spawn is offset
 // in X/Z so it's directly above a kept cube column rather than the central
@@ -29,7 +29,6 @@ export interface LatticeBuild {
 
 // Deterministic — every client builds the identical world.
 export function buildLattice(scene: THREE.Scene, world: RAPIER.World): LatticeBuild {
-  // const geometry = new THREE.BoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE);
   const geometry = new RoundedBoxGeometry(CUBE_SIZE, CUBE_SIZE, CUBE_SIZE, 4, 0.08)
   const material = new THREE.MeshStandardMaterial({
     color: 0xd9ddf9,

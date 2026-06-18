@@ -424,6 +424,7 @@ playBtn.addEventListener('click', () => {
   spawned = true;
   ragdoll.respawn(randomSpawnPoint());
   ragdoll.setVisible(true);
+  tpCamera.pointAt(new THREE.Vector3(0, 0, 0));
   welcomeModal.style.display = 'none';
   tpCamera.lock();
 });
