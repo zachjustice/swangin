@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { initDiscord } from './discord.ts';
-import { buildLattice, addSpawnMarker, SPAWN_POINT } from './world.ts';
+import { buildLattice, addSpawnMarker, SPAWN_POINT, LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
 import { createRagdoll } from './ragdoll.ts';
 import { ThirdPersonCamera } from './third-person-camera.ts';
 import { CubeReticle } from './reticle.ts';
@@ -33,7 +33,6 @@ horizonInput?.addEventListener('input', () => {
   skyT = 1.0;
   skyCurrent.set(horizonInput.value);
   scene.background = skyCurrent;
-  (scene.fog as THREE.Fog).color.copy(skyCurrent);
   cloudLayer.setSkyColors(skyCurrent, skyZenithCurrent);
 });
 
@@ -45,7 +44,6 @@ zenithInput?.addEventListener('input', () => {
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(SKY);
-scene.fog = new THREE.Fog(SKY, 30, 120);
 
 const camera = new THREE.PerspectiveCamera(
   70,
@@ -132,6 +130,10 @@ let devDummy: DevDummy | null = null;
 let devSpeedHud: HTMLDivElement | null = null;
 let perfHud: PerfHud | null = null;
 if (import.meta.env.DEV) {
+  const halfExtent = CUBE_SIZE / 2;
+  const attach = new THREE.Vector3(0, LATTICE_TOP_Y - halfExtent, 0);
+  devDummy = new DevDummy(scene, world, collision, attach, 6, 0xff3366, 'Dummy');
+  console.log('[dev] dummy hung at', attach.toArray());
   perfHud = new PerfHud();
   devSpeedHud = document.createElement('div');
   devSpeedHud.style.cssText = [
@@ -381,7 +383,6 @@ function tick() {
     skyT = Math.min(1.0, skyT + frameTime / SKY_TRANSITION_DURATION);
     skyCurrent.lerpColors(skyFrom, skyTo, skyT);
     scene.background = skyCurrent;
-    (scene.fog as THREE.Fog).color.copy(skyCurrent);
     cloudLayer.setSkyColors(skyCurrent, skyZenithCurrent);
     if (horizonInput) horizonInput.value = '#' + skyCurrent.getHexString();
   }
