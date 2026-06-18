@@ -41,7 +41,7 @@ const FRAG = /* glsl */`
 
   float fbm(vec3 p) {
     float v = 0.0, a = 0.5;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 3; i++) {
       v += a * noise3(p);
       p = p * 2.2 + vec3(1.7, 9.2, 5.4);
       a *= 0.45;
@@ -58,12 +58,11 @@ const FRAG = /* glsl */`
     float scale = 5.0;
     vec3 p = vDir * scale + vec3(uTime * 0.018, 0.0, uTime * 0.009);
 
-    float n1 = fbm(p);
-    float n2 = fbm(p + vec3(5.2, 1.3, 2.4));
-
-    // Domain warp: n2 distorts n1 sampling point for wispy tendrils
-    float cloud = fbm(p + vec3(n2 * 0.55, n1 * 0.40, n2 * 0.30));
-    cloud = smoothstep(0.45, 0.68, cloud);
+    // Single fbm call: domain-warp + per-pixel passes were dropped to keep
+    // the shader cheap. The wider smoothstep band approximates the softness
+    // we used to get from the extra octaves.
+    float cloud = fbm(p);
+    cloud = smoothstep(0.40, 0.72, cloud);
 
     // Fade clouds out below the horizon so they don't paint the ground
     float horizonFade = smoothstep(-0.25, 0.08, vDir.y);
@@ -98,12 +97,18 @@ export function createCloudLayer(scene: THREE.Scene): CloudLayer {
       uSkyHorizon: { value: new THREE.Vector3(0.42, 0.61, 0.80) },
       uSkyZenith: { value: new THREE.Vector3(0.16, 0.36, 0.72) },
     },
+    // Depth-tested sky-last: opaque cubes write depth first, then the sphere
+    // only shades pixels the depth buffer still says are background. The
+    // expensive FBM never runs on occluded pixels. LessEqualDepth (not the
+    // default LessDepth) so the sphere passes the cleared 1.0 depth.
+    depthTest: true,
     depthWrite: false,
+    depthFunc: THREE.LessEqualDepth,
     side: THREE.BackSide,
   });
   const mesh = new THREE.Mesh(geo, mat);
-  // Draw before opaque scene so close objects can overwrite it.
-  mesh.renderOrder = -1;
+  // Draw after all opaques so depthTest can reject occluded sky pixels.
+  mesh.renderOrder = 999;
   scene.add(mesh);
 
   return {

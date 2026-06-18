@@ -17,7 +17,6 @@ import { Confetti } from './confetti.ts';
 import { PlayerLifecycle } from './lifecycle.ts';
 import { DevDummy } from './dev-dummy.ts';
 import { PerfHud } from './perf-hud.ts';
-import { LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
 
 let skyIndex = 4;
 const skyFrom = new THREE.Color(SKY);
@@ -57,7 +56,7 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.copy(SPAWN_POINT).add(new THREE.Vector3(6, 0, 6));
 camera.lookAt(0, 0, 0);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+const renderer = new THREE.WebGLRenderer({ antialias: false });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.NeutralToneMapping;
@@ -233,31 +232,38 @@ const preStepLocalVel = { x: 0, y: 0, z: 0 };
 
 // Collision context: built once and mutated in place each substep. The hot
 // field (smoothedSpeed) is refreshed in collisionCtx() before every drain;
-// the closures bind `multiplayer` / `devDummy` / `confetti` via the outer
-// scope so a `multiplayer = new Multiplayer(...)` assignment after auth, or
-// later devDummy hookup, both still work without rebuilding the context.
-const collisionCtxObj: CollisionContext = {
-  localRagdoll: {
-    smoothedSpeed: 0,
-    torso: ragdoll.torso,
-    vel: preStepLocalVel,
-  },
-  lifecycle,
-  getPeer: (sid) => {
-    const real = multiplayer?.getPeer(sid);
-    if (real) return real;
-    if (devDummy && devDummy.sessionId === sid) return devDummy;
-    return undefined;
-  },
-  // Dummy-only callbacks: real peers move on their own machine and stream
-  // back, so they no-op when devDummy is unset.
-  onLocalFasterHit: (sid) => {
-    if (devDummy && sid === devDummy.sessionId) devDummy.onHit(confetti);
-  },
-  onPeerImpulse: (sid, impulse) => {
-    if (devDummy && sid === devDummy.sessionId) devDummy.kick(impulse);
-  },
-};
+// the closures read `multiplayer` / `devDummy` / `confetti` from outer scope
+// so a `multiplayer = new Multiplayer(...)` assignment after auth, or later
+// devDummy hookup, both still work without rebuilding the context.
+//
+// Wrapping the literal in a function defeats TS's narrowing of the never-
+// reassigned `let devDummy = null`: inside a function body, captured `let`
+// variables keep their declared `DevDummy | null` type.
+function buildCollisionCtx(): CollisionContext {
+  return {
+    localRagdoll: {
+      smoothedSpeed: 0,
+      torso: ragdoll.torso,
+      vel: preStepLocalVel,
+    },
+    lifecycle,
+    getPeer: (sid) => {
+      const real = multiplayer?.getPeer(sid);
+      if (real) return real;
+      if (devDummy && devDummy.sessionId === sid) return devDummy;
+      return undefined;
+    },
+    // Dummy-only: real peers move on their own machine and stream back, so
+    // these no-op when devDummy is unset.
+    onLocalFasterHit: (sid) => {
+      if (devDummy && sid === devDummy.sessionId) devDummy.onHit(confetti);
+    },
+    onPeerImpulse: (sid, impulse) => {
+      if (devDummy && sid === devDummy.sessionId) devDummy.kick(impulse);
+    },
+  };
+}
+const collisionCtxObj: CollisionContext = buildCollisionCtx();
 
 function collisionCtx(): CollisionContext {
   collisionCtxObj.localRagdoll.smoothedSpeed = ragdoll.smoothedSpeed;

@@ -23,6 +23,13 @@ interface Anchor {
   count: number;       // number of valid samples (0..TRAIL_SAMPLES)
   line: Line2;
   geom: LineGeometry;
+  // Per-anchor flat scratch handed to LineGeometry.setPositions each frame.
+  // Must be per-anchor (not shared) because setPositions stashes the Float32Array
+  // by reference inside an InstancedInterleavedBuffer that the renderer reads
+  // on the subsequent renderer.render() — sharing one scratch across anchors
+  // would have the next anchor's overwrite corrupt the previous anchor's data
+  // before the GPU upload runs.
+  flat: Float32Array;
 }
 
 const SPAN = SPEED_TRAIL_MAX - SPEED_TRAIL_START;
@@ -34,8 +41,6 @@ export class SpeedTrail {
   private readonly anchors: Anchor[];
   private readonly getSpeed: () => number;
   private sampleAcc = 0;
-  // Reused scratch — sized for the worst case (TRAIL_SAMPLES vertices).
-  private readonly flat: number[] = new Array(TRAIL_SAMPLES * 3);
 
   constructor(scene: THREE.Scene, bodies: RAPIER.RigidBody[], getSpeed: () => number) {
     this.scene = scene;
@@ -67,6 +72,7 @@ export class SpeedTrail {
         count: 0,
         line,
         geom,
+        flat: new Float32Array(TRAIL_SAMPLES * 3),
       };
     });
 
@@ -105,7 +111,7 @@ export class SpeedTrail {
       }
       a.line.visible = true;
       this.writeFlat(a);
-      a.geom.setPositions(this.flat.slice(0, a.count * 3));
+      a.geom.setPositions(a.flat.subarray(0, a.count * 3));
     }
   }
 
@@ -151,16 +157,16 @@ export class SpeedTrail {
     }
   }
 
-  // Copy ring buffer to `this.flat` in oldest→newest order.
+  // Copy ring buffer to `a.flat` in oldest→newest order.
   private writeFlat(a: Anchor): void {
     // Oldest sample lives at (head - count + TRAIL_SAMPLES) % TRAIL_SAMPLES.
     const start = (a.head - a.count + TRAIL_SAMPLES) % TRAIL_SAMPLES;
     for (let i = 0; i < a.count; i++) {
       const src = ((start + i) % TRAIL_SAMPLES) * 3;
       const dst = i * 3;
-      this.flat[dst + 0] = a.buf[src + 0];
-      this.flat[dst + 1] = a.buf[src + 1];
-      this.flat[dst + 2] = a.buf[src + 2];
+      a.flat[dst + 0] = a.buf[src + 0];
+      a.flat[dst + 1] = a.buf[src + 1];
+      a.flat[dst + 2] = a.buf[src + 2];
     }
   }
 }

@@ -13,6 +13,9 @@ export class ThirdPersonCamera {
 
   private readonly currentTarget = new THREE.Vector3();
   private readonly tmpDesired = new THREE.Vector3();
+  // Per-frame offset scratch — placeCameraImmediate runs every frame; allocating
+  // a fresh Vector3 there was measurable GC pressure in the camera path.
+  private readonly tmpOffset = new THREE.Vector3();
   private locked = false;
   private readonly onMouseMove: (e: MouseEvent) => void;
   private readonly onPointerLockChange: () => void;
@@ -65,12 +68,12 @@ export class ThirdPersonCamera {
 
   private placeCameraImmediate(): void {
     const cosP = Math.cos(this.pitch);
-    const offset = new THREE.Vector3(
+    this.tmpOffset.set(
       Math.sin(this.yaw) * cosP,
       Math.sin(this.pitch),
       Math.cos(this.yaw) * cosP,
     ).multiplyScalar(this.distance);
-    this.camera.position.copy(this.currentTarget).add(offset);
+    this.camera.position.copy(this.currentTarget).add(this.tmpOffset);
     this.camera.lookAt(this.currentTarget);
   }
 }

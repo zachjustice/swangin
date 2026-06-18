@@ -15,6 +15,12 @@ export class CubeReticle {
 
   private readonly highlight: THREE.LineSegments;
   private readonly tmpDir = new THREE.Vector3();
+  // Reused per-frame to avoid GC churn in the camera-ray hot path. The Ray's
+  // origin/dir are mutated in place each update(); hitPointScratch holds the
+  // computed hit point (referenced externally via `hitPoint`, so callers see
+  // an updated value without us allocating).
+  private readonly ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 1 });
+  private readonly hitPointScratch = new THREE.Vector3();
   private hitTime = -1;
 
   constructor(private readonly scene: THREE.Scene, private readonly world: RAPIER.World) {
@@ -32,12 +38,14 @@ export class CubeReticle {
   // Cast forward from the camera (screen center) and highlight the cube hit.
   update(camera: THREE.PerspectiveCamera): void {
     camera.getWorldDirection(this.tmpDir);
-    const ray = new RAPIER.Ray(
-      { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-      { x: this.tmpDir.x, y: this.tmpDir.y, z: this.tmpDir.z },
-    );
+    this.ray.origin.x = camera.position.x;
+    this.ray.origin.y = camera.position.y;
+    this.ray.origin.z = camera.position.z;
+    this.ray.dir.x = this.tmpDir.x;
+    this.ray.dir.y = this.tmpDir.y;
+    this.ray.dir.z = this.tmpDir.z;
 
-    let hit = this.world.castRay(ray, MAX_RAY_DIST, true, undefined, QUERY_GROUPS);
+    const hit = this.world.castRay(this.ray, MAX_RAY_DIST, true, undefined, QUERY_GROUPS);
     const now = Date.now();
     if (hit) {
       this.hitTime = now;
@@ -45,13 +53,14 @@ export class CubeReticle {
       const pos = hit.collider.translation();
       this.highlight.position.set(pos.x, pos.y, pos.z);
       this.highlight.visible = true;
-      this.hitPoint = new THREE.Vector3(
+      this.hitPointScratch.set(
         camera.position.x + this.tmpDir.x * hit.timeOfImpact,
         camera.position.y + this.tmpDir.y * hit.timeOfImpact,
         camera.position.z + this.tmpDir.z * hit.timeOfImpact,
       );
+      this.hitPoint = this.hitPointScratch;
 
-      return
+      return;
     } else if (!hit && (now - this.hitTime) > 1000) {
       this.highlight.visible = false;
       this.hitPoint = null;

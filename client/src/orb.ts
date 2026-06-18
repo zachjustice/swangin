@@ -86,22 +86,23 @@ export function createOrb(scene: THREE.Scene, center: THREE.Vector3): Orb {
   // Non-colliding by design — no Rapier collider. PLAN.md: "atmospheric, non-colliding".
   scene.add(mesh);
 
-  // Two point lights, color-matched to the swirl palette, reach a few cubes deep.
-  const blueLight = new THREE.PointLight(0x6aa6ff, 1.8, 14, 1.7);
-  blueLight.position.copy(center).add(new THREE.Vector3(0.4, 0.2, 0.0));
-  const purpleLight = new THREE.PointLight(0xb88aff, 1.6, 14, 1.7);
-  purpleLight.position.copy(center).add(new THREE.Vector3(-0.3, -0.2, 0.3));
-  scene.add(blueLight, purpleLight);
+  // Single point light, color-averaged between the swirl palette. A second
+  // light at decay=1.7 forced a per-fragment BRDF cost on every scene
+  // material; one light at linear decay roughly halves that cost while still
+  // selling local glow on nearby cubes.
+  const orbLight = new THREE.PointLight(0x9bb0ff, 2.0, 16, 1.0);
+  orbLight.position.copy(center);
+  scene.add(orbLight);
 
   function update(roomTime: number): void {
     material.uniforms.uTime.value = roomTime;
   }
 
   function dispose(): void {
-    scene.remove(mesh, blueLight, purpleLight);
+    scene.remove(mesh, orbLight);
     geometry.dispose();
     material.dispose();
   }
 
-  return { mesh, lights: [blueLight, purpleLight], update, dispose };
+  return { mesh, lights: [orbLight], update, dispose };
 }

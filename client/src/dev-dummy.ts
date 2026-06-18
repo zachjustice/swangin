@@ -26,6 +26,11 @@ import { GRAPPLE_COLOR, GRAPPLE_LINE_WIDTH } from './constants.ts';
 // `import.meta.env.DEV` is true.
 
 const DUMMY_RESPAWN_MS = 2000;
+// Frozen empty vel/grap arrays shared across applyPose calls — we never have
+// non-zero velocity for the static dummy, so per-frame literal allocations
+// were pure garbage.
+const DEV_DUMMY_ZERO3: number[] = [0, 0, 0];
+const DEV_DUMMY_ZERO4: number[] = [0, 0, 0, 0];
 // Kinematic spring used to settle the kick offset back to rest. Underdamped
 // gives the dummy a satisfying swing; values picked by eye for ~0.5–1 s
 // return time at the impulses produced by KNOCKBACK_GAIN.
@@ -52,6 +57,10 @@ export class DevDummy implements PeerSpeedInfo {
   // translation on top of the rest pose.
   private readonly kickOffset = { x: 0, y: 0, z: 0 };
   private readonly kickVel = { x: 0, y: 0, z: 0 };
+  // Pose payload handed to applyPose every frame. Identity rotation is
+  // written once in the constructor; per-frame updates only rewrite the
+  // translation triplet.
+  private readonly posePayload = new Array<number>(POSE_PART_ORDER.length * 7);
   private respawnAt = 0;
 
   constructor(
@@ -78,6 +87,14 @@ export class DevDummy implements PeerSpeedInfo {
     for (const part of this.ragdoll.parts) {
       const t = part.body.translation();
       this.restPositions.push({ x: t.x, y: t.y, z: t.z });
+    }
+    // Identity rotation in every slot — never changes, so write once.
+    for (let i = 0; i < POSE_PART_ORDER.length; i++) {
+      const o = i * 7;
+      this.posePayload[o + 3] = 0;
+      this.posePayload[o + 4] = 0;
+      this.posePayload[o + 5] = 0;
+      this.posePayload[o + 6] = 1;
     }
 
     // The visual grapple line. World-units thickness so it tapers naturally
@@ -174,20 +191,15 @@ export class DevDummy implements PeerSpeedInfo {
   // also populates lastSpeed (0) and lastVel (0) on the underlying remote
   // ragdoll so collision.drain doesn't skip the peer for missing pose data.
   private applyStaticPose(): void {
-    const pose = new Array<number>(POSE_PART_ORDER.length * 7);
+    const pose = this.posePayload;
     for (let i = 0; i < this.ragdoll.parts.length; i++) {
       const rest = this.restPositions[i];
       const o = i * 7;
-      // Identity rotation — the ragdoll spawned in an upright rest pose,
-      // and we want it to stay that way.
       pose[o + 0] = rest.x + this.kickOffset.x;
       pose[o + 1] = rest.y + this.kickOffset.y;
       pose[o + 2] = rest.z + this.kickOffset.z;
-      pose[o + 3] = 0;
-      pose[o + 4] = 0;
-      pose[o + 5] = 0;
-      pose[o + 6] = 1;
+      // rotation slots set once in the constructor.
     }
-    this.ragdoll.applyPose(pose, 0, [0, 0, 0], [0, 0, 0, 0]);
+    this.ragdoll.applyPose(pose, 0, DEV_DUMMY_ZERO3, DEV_DUMMY_ZERO4);
   }
 }

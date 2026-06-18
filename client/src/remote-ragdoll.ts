@@ -24,6 +24,11 @@ import { TRAIL_ANCHOR_PARTS } from './constants.ts';
 // dictated by interpolated network samples each frame. Kinematic so C11 can
 // collide the local ragdoll against remotes "for free".
 
+// Offset of the armLowerR translation/rotation block inside a pose payload.
+// Precomputed so applyPose's grapple-anchor branch doesn't do an indexOf scan
+// of POSE_PART_ORDER on every network frame.
+const ARM_LOWER_R_POSE_OFFSET = POSE_PART_ORDER.indexOf('armLowerR') * 7;
+
 interface RemotePart {
   name: PosePart;
   body: RAPIER.RigidBody;
@@ -215,7 +220,7 @@ export function createRemoteRagdoll(
     if (active) {
       // Hand world position from right forearm transform + HAND_LOCAL_Y offset
       // (HAND_LOCAL_Y is the wrist, i.e. the bottom of the forearm box).
-      const ro = POSE_PART_ORDER.indexOf('armLowerR') * 7;
+      const ro = ARM_LOWER_R_POSE_OFFSET;
       tmpHandQuat.set(pose[ro + 3], pose[ro + 4], pose[ro + 5], pose[ro + 6]);
       tmpHandWorld.set(0, HAND_LOCAL_Y, 0).applyQuaternion(tmpHandQuat);
       tmpHandWorld.x += pose[ro + 0];
