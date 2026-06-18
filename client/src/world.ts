@@ -5,10 +5,10 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 // Locked world parameters (PLAN.md):
 //   20×20×20 lattice, cube edge a bit smaller than the player,
 //   pitch 3–4× cube size, central spherical pocket carved.
-export const LATTICE_N = 5;
-export const CUBE_SIZE = 0.8;
-export const LATTICE_PITCH = 10.0;
-export const POCKET_RADIUS = LATTICE_PITCH * 1.1;
+export const LATTICE_N = 4;
+export const CUBE_SIZE = 1;
+export const LATTICE_PITCH = 3.0;
+export const POCKET_RADIUS = LATTICE_PITCH * 1.05;
 
 // Top of the topmost cube along +Y; spawn sits 5 above this. Spawn is offset
 // in X/Z so it's directly above a kept cube column rather than the central
@@ -36,7 +36,7 @@ export function buildLattice(scene: THREE.Scene, world: RAPIER.World): LatticeBu
     metalness: 0.3,
   });
 
-  const mesh = new THREE.InstancedMesh(geometry, material, LATTICE_N ** 3);
+  const mesh = new THREE.InstancedMesh(geometry, material, 2000);
   const dummy = new THREE.Object3D();
 
   const colliderBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
@@ -64,6 +64,86 @@ export function buildLattice(scene: THREE.Scene, world: RAPIER.World): LatticeBu
       }
     }
   }
+
+  // CYLINDER
+  // let i = 0;
+
+  // const cylinderRadius = 10;
+  // const cylinderHeight = 20;
+
+  // const radialSteps = 5;
+  // const angularSteps = 8;
+  // const verticalSteps = 5;
+
+  // for (let ir = 0; ir <= radialSteps; ir++) {
+  //   const r = ir * LATTICE_PITCH;
+
+  //   for (let ia = 0; ia < angularSteps; ia++) {
+  //     const theta = (ia / angularSteps) * Math.PI * 2;
+
+  //     const x = r * Math.cos(theta);
+  //     const z = r * Math.sin(theta);
+
+  //     for (let iy = 0; iy <= verticalSteps; iy++) {
+  //       const y = iy * LATTICE_PITCH - cylinderHeight / 2;
+
+  //       dummy.position.set(x, y, z);
+  //       dummy.updateMatrix();
+  //       mesh.setMatrixAt(i, dummy.matrix);
+
+  //       world.createCollider(
+  //         RAPIER.ColliderDesc
+  //           .cuboid(halfExtent, halfExtent, halfExtent)
+  //           .setTranslation(x, y, z),
+  //         colliderBody,
+  //       );
+
+  //       i++;
+  //     }
+  //   }
+  // }
+
+  const radius = 18;
+  const count = 150;
+
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+
+  for (let k = 0; k < count; k++) {
+    const t = k / (count - 1);
+
+    const y = 1 - 2 * t;
+    const r = Math.sqrt(1 - y * y);
+
+    const theta = k * goldenAngle;
+
+    const x = r * Math.cos(theta);
+    const z = r * Math.sin(theta);
+
+    dummy.position.set(
+      x * radius,
+      y * radius,
+      z * radius
+    );
+
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+
+    world.createCollider(
+      RAPIER.ColliderDesc
+        .cuboid(halfExtent, halfExtent, halfExtent)
+        .setTranslation(
+          x * radius,
+          y * radius,
+          z * radius
+        ),
+      colliderBody,
+    );
+
+    i++;
+  }
+
+  mesh.count = i;
+  mesh.instanceMatrix.needsUpdate = true;
 
   mesh.count = i;
   mesh.instanceMatrix.needsUpdate = true;
