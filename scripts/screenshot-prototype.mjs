@@ -1,6 +1,6 @@
 import { chromium } from 'playwright';
 import { spawn } from 'child_process';
-import { mkdir } from 'fs/promises';
+import { mkdir, writeFile } from 'fs/promises';
 import { createConnection } from 'net';
 
 // Ports to probe for an already-running Vite server (vite.config.ts defaults to 3000)
@@ -93,6 +93,7 @@ async function main() {
     // Wait an extra frame after ready so the scene fully paints
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
+    const viewportBox = await page.locator('#viewport').boundingBox();
     for (const [name, angle] of Object.entries(ANGLES)) {
       await page.evaluate(({ pos, target }) => {
         window.__prototype.setCamera(pos, target);
@@ -101,10 +102,31 @@ async function main() {
       await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
       const outPath = `${OUT_DIR}/${name}.png`;
       // Clip to the viewport div, excluding the right-hand control panel (380px)
-      const viewportBox = await page.locator('#viewport').boundingBox();
       await page.screenshot({ path: outPath, clip: viewportBox });
       console.log(`Saved ${outPath}`);
     }
+
+    // Second pass: turn on measurement isolation (torso + LEFT leg only),
+    // re-capture front + side at a tighter framing, and emit a bounds.json
+    // pinning the torso/hip/foot pixel anchors for the silhouette scorer.
+    await page.evaluate(() => window.__prototype.setMeasurementMode(true));
+    const bounds = {};
+    for (const name of ['front', 'side']) {
+      await page.evaluate(({ pos, target }) => {
+        window.__prototype.setCamera(pos, target);
+      }, ANGLES[name]);
+      await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+      // viewportBox is the screenshot crop in PAGE coords. getScreenBounds()
+      // returns coords inside the renderer canvas (which fills #viewport).
+      // The two coincide because #viewport sits flush at the page origin.
+      bounds[name] = await page.evaluate(() => window.__prototype.getScreenBounds());
+      const outPath = `${OUT_DIR}/measure-${name}.png`;
+      await page.screenshot({ path: outPath, clip: viewportBox });
+      console.log(`Saved ${outPath}`);
+    }
+    await writeFile(`${OUT_DIR}/bounds.json`, JSON.stringify(bounds, null, 2));
+    console.log(`Saved ${OUT_DIR}/bounds.json`);
+    await page.evaluate(() => window.__prototype.setMeasurementMode(false));
   } finally {
     await browser.close();
     if (viteProcess) viteProcess.kill();

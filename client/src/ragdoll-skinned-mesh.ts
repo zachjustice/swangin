@@ -441,11 +441,19 @@ export interface RagdollSkinnedMesh {
 // meshes (parented to each shin bone). `proportions` lets the tuning prototype
 // pass a fresh, slider-derived snapshot; `restOverrides` lets it hand-pose
 // specific bones (e.g. T-pose arms) for static silhouette previews.
+// Optional measurement-mode isolation: parts named here are skipped during
+// emission. Limb-segment names match POSE_PART_ORDER. Non-skinned children
+// have their own tokens: 'head_sphere', 'foot_L', 'foot_R'. Skipping a limb
+// segment also strips any extension rings that would have anchored to it,
+// so the torso shoulder/hip bumps stay but the limb tube vanishes.
+export type ExcludablePart = PosePart | 'head_sphere' | 'foot_L' | 'foot_R';
+
 export function buildRagdollSkinnedMesh(
   material: THREE.MeshStandardMaterial,
   spawn: THREE.Vector3 = new THREE.Vector3(),
   proportions: ResolvedProportions = PROPORTIONS,
   restOverrides: Partial<Record<PosePart, BoneRest>> = {},
+  excludedParts: ReadonlySet<ExcludablePart> = new Set(),
 ): RagdollSkinnedMesh {
   const rest = ragdollRestTransforms(spawn, proportions, restOverrides);
   const M = proportions.radialSegs;
@@ -572,7 +580,7 @@ export function buildRagdollSkinnedMesh(
     'armUpperR', 'armLowerR',
     'legL_thigh', 'legL_shin',
     'legR_thigh', 'legR_shin',
-  ];
+  ].filter((p) => !excludedParts.has(p as ExcludablePart)) as PosePart[];
   for (const part of limbParts) {
     const prof = limbProfiles[part]!;
     const parent = CHAIN_PARENT[part];
@@ -648,19 +656,25 @@ export function buildRagdollSkinnedMesh(
   const ownedGeoms: THREE.BufferGeometry[] = [];
   const ownedMats: THREE.Material[] = [];
 
-  const headSphereGeom = new THREE.SphereGeometry(proportions.headRadius, 20, 16);
-  ownedGeoms.push(headSphereGeom);
-  const headSphere = new THREE.Mesh(headSphereGeom, material);
-  bones.head.add(headSphere);
-  const eyeMat = addHeadDecorations(headSphere, proportions.headRadius, proportions.eyeRRatio);
-  ownedMats.push(eyeMat);
+  if (!excludedParts.has('head_sphere')) {
+    const headSphereGeom = new THREE.SphereGeometry(proportions.headRadius, 20, 16);
+    ownedGeoms.push(headSphereGeom);
+    const headSphere = new THREE.Mesh(headSphereGeom, material);
+    bones.head.add(headSphere);
+    const eyeMat = addHeadDecorations(headSphere, proportions.headRadius, proportions.eyeRRatio);
+    ownedMats.push(eyeMat);
+  }
 
   const shinRadius = proportions.shin.radius;
   const footW = shinRadius * proportions.footW;
   const footH = shinRadius * proportions.footH;
   const footD = shinRadius * proportions.footD;
   const footR = shinRadius * proportions.footCornerRadius;
+  const footTokens: Record<'legL_shin' | 'legR_shin', ExcludablePart> = {
+    legL_shin: 'foot_L', legR_shin: 'foot_R',
+  };
   for (const shinName of ['legL_shin', 'legR_shin'] as const) {
+    if (excludedParts.has(footTokens[shinName])) continue;
     const footGeom = buildFootGeometry(footW, footH, footD, footR);
     ownedGeoms.push(footGeom);
     const foot = new THREE.Mesh(footGeom, material);

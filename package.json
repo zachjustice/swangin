@@ -15,10 +15,13 @@
     "dev:client": "npm --workspace client run dev",
     "dev:server": "npm --workspace server run dev",
     "build": "npm --workspace client run build && npm --workspace server run build",
-    "screenshot": "node scripts/screenshot-prototype.mjs"
+    "screenshot": "node scripts/screenshot-prototype.mjs",
+    "measure": "node scripts/measure-silhouette.mjs",
+    "score": "npm run screenshot && npm run measure"
   },
   "devDependencies": {
     "npm-run-all2": "^7.0.2",
-    "playwright": "^1.61.0"
+    "playwright": "^1.61.0",
+    "pngjs": "^7.0.0"
   }
 }

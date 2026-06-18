@@ -8,7 +8,9 @@ import {
   resampleSplinesPair, roundedSplinePoints,
   type Spline, type Profile,
 } from './ragdoll-spline-sampling.ts';
-import { buildRagdollSkinnedMesh, type BoneRest } from './ragdoll-skinned-mesh.ts';
+import {
+  buildRagdollSkinnedMesh, type BoneRest, type ExcludablePart,
+} from './ragdoll-skinned-mesh.ts';
 
 // Standalone prototype: a static, parametric ragdoll hung in space with a side
 // panel of sliders + 3 spline editors (torso, arm, leg). The arm and leg
@@ -123,6 +125,19 @@ interface PrototypeRagdoll {
   dispose: () => void;
 }
 
+// When true, buildRagdoll emits only torso + both legs — arms and head are
+// excluded. The smoothness scorer scans OUTER silhouette edges (from image
+// left/right inward), so both legs are kept: the front-left edge is the
+// outer-left torso+leg outline, and front-right is its mirror. Keeping both
+// legs avoids manufacturing a fake kink on the side opposite the visible
+// leg.
+let measurementMode = false;
+
+const MEASUREMENT_EXCLUSIONS: ReadonlySet<ExcludablePart> = new Set<ExcludablePart>([
+  'armUpperL', 'armLowerL', 'armUpperR', 'armLowerR',
+  'head_sphere',
+]);
+
 function buildRagdoll(c: Config): PrototypeRagdoll {
   const root = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({
@@ -132,7 +147,8 @@ function buildRagdoll(c: Config): PrototypeRagdoll {
   });
   const p = resolveProportions(c);
   const overrides = tPoseArmOverrides(p);
-  const skinned = buildRagdollSkinnedMesh(mat, new THREE.Vector3(), p, overrides);
+  const exclusions = measurementMode ? MEASUREMENT_EXCLUSIONS : new Set<ExcludablePart>();
+  const skinned = buildRagdollSkinnedMesh(mat, new THREE.Vector3(), p, overrides, exclusions);
   root.add(skinned.mesh);
   return {
     root,
@@ -826,6 +842,51 @@ window.addEventListener('resize', () => {
     camera.position.set(pos.x, pos.y, pos.z);
     controls.target.set(target.x, target.y, target.z);
     controls.update();
+  },
+  // Toggle isolation rebuild: when on, the ragdoll renders as torso + LEFT
+  // leg + LEFT foot only. Used by the silhouette-smoothness measurement pass
+  // to prevent arms / head / right-leg from intruding on the edge scan.
+  setMeasurementMode(on: boolean) {
+    measurementMode = !!on;
+    rebuild();
+  },
+  // Project key world anchors through the active camera and return their
+  // pixel-Y (and a few pixel-X) coordinates within the renderer's canvas.
+  // The screenshot driver clips to the viewport div, which sits flush with
+  // the canvas's origin — so canvas pixels and screenshot pixels coincide.
+  getScreenBounds() {
+    const p = resolveProportions(config);
+    const w = renderer.domElement.width;
+    const h = renderer.domElement.height;
+    const project = (vx: number, vy: number, vz: number) => {
+      const v = new THREE.Vector3(vx, vy, vz).project(camera);
+      return { x: (v.x + 1) * 0.5 * w, y: (1 - v.y) * 0.5 * h };
+    };
+    // World Y of key anchors. The prototype spawn is at the origin.
+    const torsoYTop = p.torsoSideProfile[0][1];
+    const torsoTopY = torsoYTop;
+    const hipY = p.hipOffsetY;
+    // Foot bottom: shin centre + STIFFNESS_GAP-aware drop down to the shin
+    // bottom, then through footLocalY and the foot's half-height. footTopY is
+    // where the foot primitive starts (above the foot bottom by footH * shinR);
+    // the silhouette scan stops here so the separate foot box does not
+    // contribute step-like 2nd-derivative spikes to the smoothness score.
+    const shinCentreY = hipY - 2 * STIFFNESS_GAP - 2 * p.thigh.halfLen - p.shin.halfLen;
+    const footHalf = p.shin.radius * config.footH / 2;
+    const footTopY = shinCentreY + p.footLocalY + footHalf;
+    const footBottomY = shinCentreY + p.footLocalY - footHalf;
+    const torsoTopPx = project(0, torsoTopY, 0).y;
+    const hipPx = project(0, hipY, 0).y;
+    const footTopPx = project(0, footTopY, 0).y;
+    const footBottomPx = project(0, footBottomY, 0).y;
+    // X anchors (front view): centerline and outer hip pillar (kept leg side).
+    const hipOuterXFront = project(-p.hipOffsetX, hipY, 0).x;
+    const centerXFront = project(0, hipY, 0).x;
+    return {
+      torsoTopPx, hipPx, footTopPx, footBottomPx,
+      centerXFront, hipOuterXFront,
+      canvasWidth: w, canvasHeight: h,
+    };
   },
 };
 
