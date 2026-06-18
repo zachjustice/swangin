@@ -16,6 +16,16 @@ interface PlayerState {
   name: string;
   color: number;
   kills: number;
+  deaths: number;
+}
+
+export interface LeaderboardEntry {
+  sessionId: string;
+  name: string;
+  color: number;
+  kills: number;
+  deaths: number;
+  isLocal: boolean;
 }
 
 interface RoomState {
@@ -142,6 +152,38 @@ export class Multiplayer {
 
   getPeer(sessionId: string): Peer | undefined {
     return this.peers.get(sessionId);
+  }
+
+  getLeaderboardEntries(): LeaderboardEntry[] {
+    if (!this.room) return [];
+    const entries: LeaderboardEntry[] = [];
+
+    for (const [sessionId, peer] of this.peers) {
+      entries.push({
+        sessionId,
+        name: peer.state.name,
+        color: peer.state.color,
+        kills: peer.state.kills,
+        deaths: peer.state.deaths ?? 0,
+        isLocal: false,
+      });
+    }
+
+    if (this.mySessionId) {
+      const s = this.room.state.players.get(this.mySessionId);
+      if (s) {
+        entries.push({
+          sessionId: this.mySessionId,
+          name: s.name,
+          color: s.color,
+          kills: s.kills,
+          deaths: s.deaths ?? 0,
+          isLocal: true,
+        });
+      }
+    }
+
+    return entries;
   }
 
   async connect(): Promise<void> {

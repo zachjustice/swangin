@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier3d-compat';
 import { CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 import { initDiscord } from './discord.ts';
-import { buildLattice, addSpawnMarker, SPAWN_POINT, LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
+import { buildLattice, randomSpawnPoint, SPAWN_POINT, LATTICE_TOP_Y, CUBE_SIZE } from './world.ts';
 import { createRagdoll } from './ragdoll.ts';
 import { ThirdPersonCamera } from './third-person-camera.ts';
 import { CubeReticle } from './reticle.ts';
@@ -17,6 +17,7 @@ import { Confetti } from './confetti.ts';
 import { PlayerLifecycle } from './lifecycle.ts';
 import { DevDummy } from './dev-dummy.ts';
 import { PerfHud } from './perf-hud.ts';
+import { LeaderboardHud } from './leaderboard-hud.ts';
 
 let skyIndex = 4;
 const skyFrom = new THREE.Color(SKY);
@@ -107,7 +108,6 @@ const eventQueue = new RAPIER.EventQueue(true);
 const collision = new Collision();
 
 const { count: cubeCount } = buildLattice(scene, world);
-addSpawnMarker(scene);
 console.log(`[world] ${cubeCount} cubes built`);
 
 const orb = createOrb(scene, new THREE.Vector3(0, 0, 0));
@@ -127,7 +127,6 @@ const confetti = new Confetti(scene);
 // Hang length is tuned so the dummy's feet stay clear of the next-layer cube
 // tops; adjust if proportions change.
 let devDummy: DevDummy | null = null;
-let devSpeedHud: HTMLDivElement | null = null;
 let perfHud: PerfHud | null = null;
 if (import.meta.env.DEV) {
   const halfExtent = CUBE_SIZE / 2;
@@ -135,21 +134,12 @@ if (import.meta.env.DEV) {
   devDummy = new DevDummy(scene, world, collision, attach, 6, 0xff3366, 'Dummy');
   console.log('[dev] dummy hung at', attach.toArray());
   perfHud = new PerfHud();
-  devSpeedHud = document.createElement('div');
-  devSpeedHud.style.cssText = [
-    'position: fixed',
-    'top: 8px',
-    'right: 12px',
-    'color: #000',
-    'font: 700 16px ui-monospace, SFMono-Regular, Menlo, monospace',
-    'pointer-events: none',
-    'z-index: 10',
-  ].join(';');
-  document.body.appendChild(devSpeedHud);
 }
 
 // Multiplayer state — assigned after auth resolves below; tick() guards on null.
 let multiplayer: Multiplayer | null = null;
+
+const leaderboardHud = new LeaderboardHud();
 
 // Lifecycle is constructed up front but depends on multiplayer at the moment
 // of sendDied. The closure reads `multiplayer` at call time so we don't need
@@ -163,7 +153,7 @@ const lifecycle = new PlayerLifecycle({
     },
   },
   confetti,
-  spawnPoint: SPAWN_POINT,
+  spawnPoint: randomSpawnPoint,
 });
 
 let wasInsideOrb = false;
@@ -396,10 +386,11 @@ function tick() {
   __t.scene = __mark() - __m; __m = __mark();
 
   multiplayer?.update(frameTime);
+  if (multiplayer) leaderboardHud.update(multiplayer.getLeaderboardEntries());
   __t.mp = __mark() - __m; __m = __mark();
 
   devDummy?.update(performance.now(), frameTime);
-  if (devSpeedHud) devSpeedHud.textContent = `${ragdoll.smoothedSpeed.toFixed(1)} m/s`;
+  perfHud?.setSpeed(ragdoll.smoothedSpeed);
   orb.update(multiplayer ? multiplayer.roomTime : performance.now() / 1000);
   confetti.update(frameTime);
   __t.fx = __mark() - __m; __m = __mark();
@@ -431,7 +422,7 @@ playBtn.disabled = true;
 playBtn.addEventListener('click', () => {
   if (!authReady) return;
   spawned = true;
-  ragdoll.respawn(SPAWN_POINT);
+  ragdoll.respawn(randomSpawnPoint());
   ragdoll.setVisible(true);
   welcomeModal.style.display = 'none';
   tpCamera.lock();

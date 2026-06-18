@@ -31,7 +31,7 @@ export interface LifecycleDeps {
   grapple: { release(): void };
   multiplayer: { sendDied(killerSession: string, x: number, y: number, z: number): void };
   confetti: { burst(x: number, y: number, z: number, color: number): void };
-  spawnPoint: THREE.Vector3;
+  spawnPoint: () => THREE.Vector3;
 }
 
 export class PlayerLifecycle {
@@ -80,7 +80,7 @@ export class PlayerLifecycle {
       }
       this.deps.confetti.burst(t.x, t.y, t.z, this.deps.ragdoll.material.color.getHex());
       this.deps.ragdoll.setVisible(false);
-      this.deps.ragdoll.respawn(this.deps.spawnPoint);
+      this.deps.ragdoll.respawn(this.deps.spawnPoint());
       this.deps.ragdoll.setVisible(true);
       this.state = 'SPAWN_PROTECT';
       this.stateEnteredAt = now;
@@ -94,7 +94,7 @@ export class PlayerLifecycle {
   // spawn-protect so a quick recovery isn't immediately punished.
   forceRespawn(): void {
     this.deps.grapple.release();
-    this.deps.ragdoll.respawn(this.deps.spawnPoint);
+    this.deps.ragdoll.respawn(this.deps.spawnPoint());
     this.state = 'SPAWN_PROTECT';
     this.stateEnteredAt = performance.now();
     this.killerSession = null;

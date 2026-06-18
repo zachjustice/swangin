@@ -11,6 +11,9 @@ export class Player extends Schema {
   // killer in a `died` message; reset to 0 when this player is the victim.
   // uint16 ceiling is 65535 — clamped server-side.
   @type('uint16') kills = 0;
+  // Death counter. Incremented each time this player is the victim in a `died`
+  // message; never reset. uint16 ceiling is 65535 — clamped server-side.
+  @type('uint16') deaths = 0;
 }
 
 export class SwanginState extends Schema {

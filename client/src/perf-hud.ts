@@ -18,13 +18,18 @@ export class PerfHud {
   private idx = 0;
   private filled = 0;
   private lastFlushMs = 0;
+  private speed = 0;
+
+  setSpeed(mps: number): void {
+    this.speed = mps;
+  }
 
   constructor() {
     this.root = document.createElement('div');
     this.root.style.cssText = [
       'position: fixed',
       'top: 8px',
-      'left: 8px',
+      'right: 8px',
       'padding: 6px 8px',
       'background: rgba(0,0,0,0.55)',
       'color: #0f0',
@@ -84,7 +89,8 @@ export class PerfHud {
 
     this.text.textContent =
       `${fps.toFixed(0)} fps  ${avg.toFixed(1)}ms\n` +
-      `min ${min.toFixed(1)}  p99 ${p99.toFixed(1)}  max ${max.toFixed(1)}`;
+      `min ${min.toFixed(1)}  p99 ${p99.toFixed(1)}  max ${max.toFixed(1)}\n` +
+      `spd  ${this.speed.toFixed(1)} m/s`;
     this.text.style.whiteSpace = 'pre';
     // Color-code on p99 to make stutter obvious without staring at numbers.
     this.text.style.color = p99 > 33 ? '#f55' : p99 > 20 ? '#ff0' : '#0f0';

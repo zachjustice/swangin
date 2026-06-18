@@ -74,23 +74,9 @@ export function buildLattice(scene: THREE.Scene, world: RAPIER.World): LatticeBu
   return { mesh, count: i };
 }
 
-export function addSpawnMarker(scene: THREE.Scene): THREE.Object3D {
-  const group = new THREE.Group();
-  group.position.copy(SPAWN_POINT);
-
-  const core = new THREE.Mesh(
-    new THREE.SphereGeometry(0.35, 16, 12),
-    new THREE.MeshBasicMaterial({ color: 0x9fffa8 }),
-  );
-  group.add(core);
-
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(0.7, 0.04, 8, 32),
-    new THREE.MeshBasicMaterial({ color: 0x9fffa8, transparent: true, opacity: 0.6 }),
-  );
-  ring.rotation.x = Math.PI / 2;
-  group.add(ring);
-
-  scene.add(group);
-  return group;
+export function randomSpawnPoint(): THREE.Vector3 {
+  const bound = ((LATTICE_N - 1) / 2) * LATTICE_PITCH;
+  const x = (Math.random() * 2 - 1) * bound;
+  const z = (Math.random() * 2 - 1) * bound;
+  return new THREE.Vector3(x, LATTICE_TOP_Y + 5, z);
 }

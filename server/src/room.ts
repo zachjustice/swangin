@@ -164,6 +164,7 @@ export class SwanginRoom extends Room<SwanginState> {
 
       killer.kills = Math.min(65535, killer.kills + 1);
       victim.kills = 0;
+      victim.deaths = Math.min(65535, victim.deaths + 1);
 
       this.broadcast('confetti', {
         victimSession: client.sessionId,
