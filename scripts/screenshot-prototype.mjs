@@ -83,6 +83,9 @@ async function main() {
 
   page.on('console', (msg) => {
     if (msg.type() === 'error') console.error('[page]', msg.text());
+    else if (msg.type() === 'log' && msg.text().includes('[skinned-mesh]')) {
+      console.log('[page-log]', msg.text());
+    }
   });
   page.on('pageerror', (err) => console.error('[pageerror]', err.message));
 

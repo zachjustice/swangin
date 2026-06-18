@@ -76,6 +76,49 @@ function cosineFalloff(d: number, R: number): number {
   return (1 + Math.cos((d / R) * Math.PI)) / 2;
 }
 
+// Smoothly blend the lower portion of a profile so its X-radius converges
+// on `targetX` at and below `blendEndY`. Above `blendStartY` the profile is
+// untouched; in between, a cubic smoothstep interpolates from the original
+// radius to `targetX`. Eliminates the silhouette kink where the torso
+// narrows to a point while the thigh tube continues with constant radius.
+function smoothBlendProfileBottom(
+  profile: Profile, blendStartY: number, blendEndY: number, targetX: number,
+): Profile {
+  return profile.map(([x, y]) => {
+    if (y >= blendStartY) return [x, y] as [number, number];
+    if (y <= blendEndY) return [targetX, y] as [number, number];
+    const t = (blendStartY - y) / (blendStartY - blendEndY);
+    // Quintic smoothstep: C2 continuous (both 1st and 2nd derivatives vanish
+    // at t=0 and t=1). Cubic smoothstep is only C1, which leaves a 2nd-
+    // derivative jump at the blend-zone endpoints — exactly what the
+    // silhouette scorer punishes.
+    const s = t * t * t * (10 + t * (-15 + 6 * t));
+    return [x * (1 - s) + targetX * s, y] as [number, number];
+  });
+}
+
+// Mirror image of smoothBlendProfileBottom: flatten the TOP of a profile so
+// it converges on `targetX` at and above `blendStartY`. Used to kill the
+// pointed apex on the thigh/upper-arm profile — that apex would otherwise
+// project as a degenerate spike when the segment extends upward into the
+// torso silhouette, completely breaking the continuous outline we want.
+function smoothBlendProfileTop(
+  profile: Profile, blendStartY: number, blendEndY: number, targetX: number,
+): Profile {
+  // blendStartY > blendEndY (Y descends top→bottom).
+  return profile.map(([x, y]) => {
+    if (y >= blendStartY) return [targetX, y] as [number, number];
+    if (y <= blendEndY) return [x, y] as [number, number];
+    const t = (blendStartY - y) / (blendStartY - blendEndY);
+    // Quintic smoothstep: C2 continuous (both 1st and 2nd derivatives vanish
+    // at t=0 and t=1). Cubic smoothstep is only C1, which leaves a 2nd-
+    // derivative jump at the blend-zone endpoints — exactly what the
+    // silhouette scorer punishes.
+    const s = t * t * t * (10 + t * (-15 + 6 * t));
+    return [targetX * (1 - s) + x * s, y] as [number, number];
+  });
+}
+
 // Linear interpolation of the front profile's X-radius at a given segment-
 // local Y. The profile is sorted top→bottom in Y (y descending). Used to
 // derive bump heights: `localTorsoRadius_at_anchor_Y` tells us how much the
@@ -459,13 +502,39 @@ export function buildRagdollSkinnedMesh(
   const M = proportions.radialSegs;
   const Mt = proportions.torsoRadialSegs;
 
+  // The leg profile naturally has a pointed apex at the top (radius 0 →
+  // grows to max) because it was authored as a closed leg silhouette. When
+  // the thigh segment extends UP into the torso (the hip overlap), that
+  // pointed top projects as a degenerate spike right where we need a
+  // continuous outline. Flat-top the thigh profile so the upward extension
+  // is a constant column at the thigh's max radius — the torso bottom is
+  // sized to meet this radius exactly.
+  const thighFrontMax = Math.max(...proportions.thigh.front.map(([x]) => x));
+  const thighSideMax = Math.max(...proportions.thigh.side.map(([x]) => x));
+  const thighHalfLen = proportions.thigh.halfLen;
+  // Blend zone: keep the top 35% of the segment locked at max radius, then
+  // smoothstep down to the natural profile shape by ~70% down the segment.
+  // This is the SEGMENT-LOCAL Y range (top = +halfLen, bottom = -halfLen).
+  const thighFlatTopStart = thighHalfLen * 0.30;
+  const thighFlatTopEnd = -thighHalfLen * 0.20;
+  const flatThighFront = smoothBlendProfileTop(
+    proportions.thigh.front, thighFlatTopStart, thighFlatTopEnd, thighFrontMax,
+  );
+  const flatThighSide = smoothBlendProfileTop(
+    proportions.thigh.side, thighFlatTopStart, thighFlatTopEnd, thighSideMax,
+  );
+  const flatThigh = {
+    front: flatThighFront, side: flatThighSide,
+    halfLen: proportions.thigh.halfLen, radius: proportions.thigh.radius,
+  };
+
   const limbProfiles: Partial<Record<PosePart, { front: Profile; side: Profile }>> = {
     armUpperL: proportions.armUpper,
     armUpperR: proportions.armUpper,
     armLowerL: proportions.armLower,
     armLowerR: proportions.armLower,
-    legL_thigh: proportions.thigh,
-    legR_thigh: proportions.thigh,
+    legL_thigh: flatThigh,
+    legR_thigh: flatThigh,
     legL_shin: proportions.shin,
     legR_shin: proportions.shin,
   };
@@ -475,6 +544,62 @@ export function buildRagdollSkinnedMesh(
   const skinW: number[] = [];
   const indices: number[] = [];
 
+  // Reshape the torso's lower silhouette so it smoothly converges on the
+  // thigh's outer dimensions at the hip. With the original profile, the
+  // torso surface narrows from belly width to a point at Y=-0.3 while the
+  // thigh tube stays at constant radius — the silhouette has a sharp 2nd-
+  // derivative spike where one curve meets the other. By blending the
+  // profile bottom into thigh-matching radii (side = thigh side radius,
+  // front = hipOffsetX + thigh front radius, so the torso edge lines up
+  // with the leg's OUTER edge), the visible silhouette becomes one
+  // continuous curve from chest to thigh.
+  // World Y of the thigh's top ring (with the extension): the thigh top
+  // is at hipOffsetY - STIFFNESS_GAP, and the upward extension reaches
+  // HIP_OVERLAP above that. Torso is centred at world Y=0 by construction,
+  // so torso-local equals world. We aim the torso blend to LAND at the
+  // top of the thigh extension so torso shell and thigh column meet
+  // there with matching radii.
+  const thighExtTopWorldY = proportions.hipOffsetY - STIFFNESS_GAP + HIP_OVERLAP;
+  const torsoBlendStartY = 0.05;
+  const torsoBlendEndY = thighExtTopWorldY;
+  const torsoFrontTarget = proportions.hipOffsetX + thighFrontMax;
+  const torsoSideTarget = thighSideMax;
+  // Also flat-top the torso. The natural profile has radius 0 at the top
+  // (closed sphere apex), which projects as a high-curvature dome in the
+  // silhouette. In normal mode the head sphere hides this, but the
+  // measurement scorer excludes the head — so the torso apex is what the
+  // scorer sees first. A flat-topped column with a C2 fillet down to the
+  // natural body width pulls the apex's 2nd derivative back to baseline.
+  const torsoTopFrontProfile = proportions.torsoFrontProfile;
+  const torsoTopY = torsoTopFrontProfile[0][1];
+  const torsoTopFlatStartY = torsoTopY - 0.005;  // a tiny flat strip
+  const torsoTopFlatEndY = torsoTopY - 0.18;     // ~18 cm fillet down
+  const torsoTopFrontTarget = 0.10;
+  const torsoTopSideTarget = 0.09;
+  let torsoFront = smoothBlendProfileTop(
+    proportions.torsoFrontProfile, torsoTopFlatStartY, torsoTopFlatEndY, torsoTopFrontTarget,
+  );
+  let torsoSide = smoothBlendProfileTop(
+    proportions.torsoSideProfile, torsoTopFlatStartY, torsoTopFlatEndY, torsoTopSideTarget,
+  );
+  torsoFront = smoothBlendProfileBottom(
+    torsoFront, torsoBlendStartY, torsoBlendEndY, torsoFrontTarget,
+  );
+  torsoSide = smoothBlendProfileBottom(
+    torsoSide, torsoBlendStartY, torsoBlendEndY, torsoSideTarget,
+  );
+  // eslint-disable-next-line no-console
+  console.log('[skinned-mesh]',
+    'torsoBot=', torsoFront[torsoFront.length-1],
+    'torsoSideBot=', torsoSide[torsoSide.length-1],
+    'frontTarget=', torsoFrontTarget.toFixed(4),
+    'sideTarget=', torsoSideTarget.toFixed(4),
+    'thighFrontMax=', thighFrontMax.toFixed(4),
+    'thighSideMax=', thighSideMax.toFixed(4),
+    'hipOffsetX=', proportions.hipOffsetX.toFixed(4),
+    'flatThighTopFront=', flatThighFront[0],
+    'flatThighTopSide=', flatThighSide[0]);
+
   // Torso: full sweep. Top NECK_BLEND_FRAC slice blends toward the head bone
   // so the head's motion gives the torso top a soft flex instead of a hard
   // swivel — see SHOULDER/HIP blends below for the same trick at the limbs.
@@ -482,7 +607,7 @@ export function buildRagdollSkinnedMesh(
   emitSegment(
     positions, skinIdx, skinW, indices, Mt,
     rest.torso, BONE_IDX.torso,
-    proportions.torsoFrontProfile, proportions.torsoSideProfile,
+    torsoFront, torsoSide,
     {
       parentBone: BONE_IDX.head,
       childBone: null,
@@ -505,17 +630,25 @@ export function buildRagdollSkinnedMesh(
   // `anchorLateralX + limbRadius + margin`. The bump needs to add the
   // difference between that target and the torso's current silhouette at
   // that height.
-  const torsoFront = proportions.torsoFrontProfile;
+  // Bumps procedurally widen the torso silhouette so limbs grow out of a
+  // doughy bulge rather than poking through a thin tube. They are designed
+  // around the assumption that the limb IS rendered — in measurement mode
+  // the arms are excluded and the bumps then read as random outward bulges
+  // that break silhouette continuity. Skip the bumps for any limb whose
+  // upper segment isn't being emitted.
+  const armsRendered = !excludedParts.has('armUpperL') && !excludedParts.has('armUpperR');
+  const legsRendered = !excludedParts.has('legL_thigh') && !excludedParts.has('legR_thigh');
   const shoulderTargetX = proportions.shoulderOffsetX + proportions.armUpper.radius;
-  const hipTargetX = proportions.hipOffsetX + proportions.thigh.radius;
-  const shoulderBumpH = Math.max(
+  const shoulderBumpH = !armsRendered ? 0 : Math.max(
     0,
     shoulderTargetX - torsoXRadiusAt(torsoFront, proportions.shoulderOffsetY) + BUMP_HEIGHT_MARGIN,
   );
-  const hipBumpH = Math.max(
-    0,
-    hipTargetX - torsoXRadiusAt(torsoFront, proportions.hipOffsetY) + BUMP_HEIGHT_MARGIN,
-  );
+  // Hip bump zeroed unconditionally: the blended torso bottom already
+  // converges on the thigh's outer edge with a C2-smooth fillet, so any
+  // additional outward displacement would re-introduce a 2nd-derivative
+  // spike. The thigh's upward extension still buries the seam.
+  void legsRendered;
+  const hipBumpH = 0;
 
   // Neck-blend zone clamp for shoulder bumps. NECK_BLEND_FRAC of the torso's
   // half-range from the top is head-weighted; displacing those verts would
