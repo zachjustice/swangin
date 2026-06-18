@@ -41,7 +41,7 @@ const FRAG = /* glsl */`
 
   float fbm(vec3 p) {
     float v = 0.0, a = 0.5;
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 5; i++) {
       v += a * noise3(p);
       p = p * 2.2 + vec3(1.7, 9.2, 5.4);
       a *= 0.45;
@@ -50,22 +50,21 @@ const FRAG = /* glsl */`
   }
 
   void main() {
-    // Vertical sky gradient: horizon color near the equator,
-    // zenith color overhead. Softened so the band isn't a hard line.
-    float gradient = smoothstep(-0.05, 0.7, vDir.y);
+    // Gradual vertical gradient spanning the full upper hemisphere so the
+    // horizon color blends slowly into the zenith rather than flipping
+    // midway up the dome.
+    float gradient = smoothstep(-0.1, 1.0, vDir.y);
     vec3 sky = mix(uSkyHorizon, uSkyZenith, gradient);
 
     float scale = 5.0;
     vec3 p = vDir * scale + vec3(uTime * 0.018, 0.0, uTime * 0.009);
 
-    // Single fbm call: domain-warp + per-pixel passes were dropped to keep
-    // the shader cheap. The wider smoothstep band approximates the softness
-    // we used to get from the extra octaves.
     float cloud = fbm(p);
-    cloud = smoothstep(0.40, 0.72, cloud);
+    // Lower threshold so more of the sky is covered by cloud mass.
+    cloud = smoothstep(0.30, 0.62, cloud);
 
-    // Fade clouds out below the horizon so they don't paint the ground
-    float horizonFade = smoothstep(-0.25, 0.08, vDir.y);
+    // Extend fade so clouds reach further toward the horizon.
+    float horizonFade = smoothstep(-0.40, 0.02, vDir.y);
     cloud *= horizonFade;
 
     // Cloud peak softened off pure white so it stays well below the bloom
@@ -74,8 +73,7 @@ const FRAG = /* glsl */`
     // dimming the scene.
     float lit = mix(0.82, 1.0, smoothstep(-0.1, 0.6, vDir.y));
     vec3 peak = vec3(0.92, 0.94, 0.96) * lit;
-    // 0.28 keeps cloud intensity close to the prior transparent dome.
-    vec3 color = mix(sky, peak, cloud * 0.28);
+    vec3 color = mix(sky, peak, cloud * 0.48);
     gl_FragColor = vec4(color, 1.0);
   }
 `;
