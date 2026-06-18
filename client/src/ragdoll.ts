@@ -20,7 +20,6 @@ import {
 } from './ragdoll-proportions.ts';
 import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 import type { Collision } from './collision.ts';
-import { createKillCounter, type KillCounter } from './kill-counter.ts';
 import { SpeedTrail } from './speed-trail.ts';
 import { COLLISION_SPEED_EMA_ALPHA, TRAIL_ANCHOR_PARTS } from './constants.ts';
 
@@ -281,11 +280,6 @@ export function createRagdoll(
   const skinned = buildRagdollSkinnedMesh(mat, spawn);
   scene.add(skinned.mesh);
 
-  // Kill-counter billboard parented to the torso bone. Hidden at 0;
-  // setKillCount() flips visibility and redraws the canvas.
-  const killCounter: KillCounter = createKillCounter();
-  skinned.bones.torso.add(killCounter.sprite);
-
   // EMA-smoothed |torso linvel|. Updated each physics substep. Used for the
   // collision threshold check and broadcast on the wire.
   const speedState = { value: 0 };
@@ -371,9 +365,7 @@ export function createRagdoll(
     trail.setVisible(v);
   }
 
-  function setKillCount(n: number) {
-    killCounter.setCount(n);
-  }
+  function setKillCount(_n: number) {}
 
   function linvel() {
     return torso.body.linvel();
@@ -415,7 +407,6 @@ export function createRagdoll(
 
   function dispose() {
     for (const h of colliderHandles) collision.unregisterCollider(h);
-    killCounter.dispose();
     trail.dispose();
     scene.remove(skinned.mesh);
     skinned.dispose();

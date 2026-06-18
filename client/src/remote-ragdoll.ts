@@ -16,7 +16,6 @@ import {
 import { buildRagdollSkinnedMesh } from './ragdoll-skinned-mesh.ts';
 import { POSE_FLOATS } from './pose-codec.ts';
 import type { Collision } from './collision.ts';
-import { createKillCounter, type KillCounter } from './kill-counter.ts';
 import { SpeedTrail } from './speed-trail.ts';
 import { TRAIL_ANCHOR_PARTS } from './constants.ts';
 
@@ -132,9 +131,6 @@ export function createRemoteRagdoll(
   const skinned = buildRagdollSkinnedMesh(mat, spawnHint);
   scene.add(skinned.mesh);
 
-  const killCounter: KillCounter = createKillCounter();
-  skinned.bones.torso.add(killCounter.sprite);
-
   // Speed-trail driven by the most-recent broadcast speed (already EMA
   // smoothed on the sender). lastSpeed is null until the first pose arrives —
   // SpeedTrail treats that as 0, which keeps the line group hidden.
@@ -242,14 +238,11 @@ export function createRemoteRagdoll(
     trail.setVisible(v);
   }
 
-  function setKillCount(n: number): void {
-    killCounter.setCount(n);
-  }
+  function setKillCount(_n: number): void {}
 
   function dispose(): void {
     for (const h of colliderHandles) collision.unregisterCollider(h);
     for (const p of parts) world.removeRigidBody(p.body);
-    killCounter.dispose();
     trail.dispose();
     scene.remove(skinned.mesh);
     skinned.dispose();
